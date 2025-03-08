@@ -8,6 +8,10 @@
         "strict": true,
         "noImplicitReturns": true,
         "noFallthroughCasesInSwitch": true,
-        "noUnusedParameters": true
-    }
+        "noUnusedParameters": true,
+        "skipLibCheck": true,
+        "jsx": "react"
+    },
+    "include": ["src/**/*"],
+    "exclude": ["node_modules", "dist"]
 }

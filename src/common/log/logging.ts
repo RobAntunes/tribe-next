@@ -27,6 +27,10 @@ class OutputChannelLogger {
     public traceVerbose(...data: Arguments): void {
         this.channel.debug(util.format(...data));
     }
+
+    public traceDebug(...data: Arguments): void {
+        this.channel.debug(util.format(...data));
+    }
 }
 
 let channel: OutputChannelLogger | undefined;
@@ -57,4 +61,8 @@ export function traceInfo(...args: Arguments): void {
 
 export function traceVerbose(...args: Arguments): void {
     channel?.traceVerbose(...args);
+}
+
+export function traceDebug(...args: Arguments): void {
+    channel?.traceDebug(...args);
 }

@@ -1,0 +1,551 @@
+.consolidated-dashboard {
+  display: block !important;
+  position: relative;
+  width: 100%;
+  min-height: 500px;
+  z-index: 10;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+.dashboard-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 10px;
+  position: relative;
+  z-index: 20;
+}
+
+.tab-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.tab-button.active {
+  background-color: var(--vscode-list-hoverBackground);
+  font-weight: bold;
+}
+
+.dashboard-content {
+  display: block !important;
+  position: relative;
+  min-height: 400px;
+  width: 100%;
+  z-index: 20;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+/* Override any conflicting styles */
+.tab-content-container {
+  display: block !important;
+  position: relative !important;
+  z-index: 100 !important;
+  overflow: visible !important;
+  width: 100% !important;
+  height: auto !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* Make sure child components take full width */
+.dashboard-content > * {
+  width: 100%;
+  height: 100%;
+  min-height: 200px; /* Ensure minimum height for content */
+}
+
+/* Tab content wrapper to ensure proper display */
+.tab-content-wrapper {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  min-height: 300px; /* Ensure minimum height for content */
+  background-color: var(--vscode-editor-background);
+}
+
+/* Make sure the components inside tab-content-wrapper display properly */
+.tab-content-wrapper > * {
+  width: 100%;
+  height: 100%;
+}
+
+/* Target specific components to ensure they take up full height */
+.tab-content-wrapper .project-dashboard,
+.tab-content-wrapper .tools-panel,
+.tab-content-wrapper .learning-dashboard {
+  height: 100% !important;
+  min-height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* Ensure components with this class take up full height */
+.full-height-component {
+  height: 100% !important;
+  min-height: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* Overview styles */
+.dashboard-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.dashboard-overview h3 {
+  margin: 0 0 16px 0;
+  font-size: 1.2rem;
+  font-weight: 500;
+  color: var(--vscode-editor-foreground);
+}
+
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.overview-card {
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.settings-menu-container {
+  position: relative;
+}
+
+.settings-cog-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background-color: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--vscode-foreground);
+}
+
+.settings-cog-button:hover {
+  background-color: var(--tribe-primary);
+  color: white;
+  border-color: var(--tribe-primary);
+  transform: rotate(15deg);
+}
+
+.settings-cog-button:active {
+  transform: rotate(30deg);
+}
+
+.settings-popover {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  width: 250px;
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  animation: popoverFadeIn 0.2s ease;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.popover-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.popover-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.popover-content {
+  padding: 12px;
+}
+
+.popover-toggle {
+  margin-bottom: 16px;
+}
+
+.popover-toggle label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toggle-button {
+  background-color: var(--vscode-editor-background);
+  color: var(--vscode-descriptionForeground);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 14px;
+  padding: 4px 12px;
+  min-width: 60px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggle-button.active {
+  background-color: var(--vscode-terminal-ansiGreen);
+  color: white;
+  border-color: var(--vscode-terminal-ansiGreen);
+}
+
+.popover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-button {
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.action-button:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.card-metrics {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.metric-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--vscode-editor-foreground);
+}
+
+.metric-label {
+  font-size: 0.8rem;
+  color: var(--vscode-descriptionForeground);
+  margin-top: 4px;
+}
+
+.card-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.status-indicator {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+}
+
+.status-indicator.active {
+  background-color: var(--vscode-terminal-ansiGreen);
+  color: var(--vscode-editor-background);
+}
+
+.status-indicator.inactive {
+  background-color: var(--vscode-terminal-ansiRed);
+  color: var(--vscode-editor-background);
+}
+
+.card-action-button {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s ease;
+}
+
+.card-action-button:hover {
+  background-color: var(--vscode-button-hoverBackground);
+}
+
+.overview-agents {
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+.overview-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.overview-section-header h4 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.agent-avatars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.agent-avatar-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.agent-name {
+  font-size: 0.8rem;
+  max-width: 80px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.overview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.system-toggle-button {
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s ease;
+}
+
+.system-toggle-button:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.system-toggle-button.active {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+/* Project card specific styles */
+.project-card {
+  border-top: 3px solid #4caf50;
+}
+
+/* Tools card specific styles */
+.tools-card {
+  border-top: 3px solid #2196f3;
+}
+
+/* Learning card specific styles */
+.learning-card {
+  border-top: 3px solid #9c27b0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .overview-cards {
+    grid-template-columns: 1fr;
+  }
+  
+  /* Make tabs even more compact on small screens */
+  .tab-button {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    min-width: 70px;
+  }
+  
+  .tab-button span {
+    margin-left: 4px;
+    font-size: 0.8rem;
+  }
+  
+  /* Make sure popover menus don't overflow on smaller screens */
+  .settings-popover {
+    width: 220px;
+    right: -10px;
+  }
+  
+  /* Adjust metrics display for smaller screens */
+  .card-metrics {
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  
+  /* Make status indicators more compact */
+  .status-indicator {
+    padding: 2px 6px;
+    font-size: 0.7rem;
+  }
+  
+  /* Adjust agent avatars for better small screen display */
+  .agent-avatars {
+    gap: 12px;
+    justify-content: center;
+  }
+  
+  .agent-avatar {
+    width: 34px;
+    height: 34px;
+    font-size: 0.8rem;
+  }
+}
+
+/* For very small screens, make tabs even more compact */
+@media (max-width: 480px) {
+  .tab-button {
+    padding: 4px 6px;
+    min-width: 60px;
+  }
+  
+  .dashboard-content {
+    padding: 12px;
+  }
+  
+  /* Stack tab buttons on very small screens */
+  .dashboard-tabs {
+    flex-direction: column;
+    gap: 4px;
+    max-width: 100px;
+    margin-right: 10px;
+  }
+  
+  /* Adjust the layout to side-by-side tabs and content */
+  .consolidated-dashboard {
+    display: flex;
+    flex-direction: row;
+  }
+  
+  /* Adjust the content area to take remaining space */
+  .dashboard-content {
+    flex: 1;
+  }
+  
+  /* Make settings buttons smaller on very small screens */
+  .settings-cog-button {
+    width: 26px;
+    height: 26px;
+  }
+  
+  /* Further adjust popovers for tiny screens */
+  .settings-popover {
+    width: 200px;
+    right: -20px;
+  }
+  
+  /* Simplify card appearance for tiny screens */
+  .overview-card {
+    padding: 10px;
+    gap: 10px;
+  }
+  
+  .card-title h4 {
+    font-size: 0.9rem;
+  }
+}
+
+/* Ensure popovers don't go off-screen on the left side */
+@media (max-width: 320px) {
+  .settings-popover {
+    right: 0;
+    left: auto;
+    width: 180px;
+  }
+  
+  .popover-header h4 {
+    font-size: 0.9rem;
+  }
+  
+  .action-button {
+    font-size: 0.8rem;
+    padding: 4px 8px;
+  }
+  
+  .toggle-button {
+    min-width: 50px;
+    padding: 2px 8px;
+  }
+} 

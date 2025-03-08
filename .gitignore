@@ -1,12 +1,72 @@
-out
-dist
-node_modules
-.vscode-test/
+# Build outputs
+out/
+dist/
 *.vsix
+
+# Dependencies
+node_modules/
 .venv/
-.vs/
-.nox/
+crewai_venv/
+python/
 bundled/libs/
-**/__pycache__
-**/.pytest_cache
-**/.vs
+bundled/bundled_libs.pth
+
+# VS Code
+.vscode-test/
+.vscode/
+.vs/
+
+# Python
+**/__pycache__/
+**/.pytest_cache/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.nox/
+.coverage
+htmlcov/
+.tox/
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Environment
+.env
+.env.local
+.env.*.local
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Generated files
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+!src/test/**/*.js
+
+# Project specific
+.tribe/
+credentials.json

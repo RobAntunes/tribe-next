@@ -1,158 +1,175 @@
-# Template for VS Code python tools extensions
+# MightyDev: AI-Native IDE Extension with CrewAI
 
-This is a template repository to get you started on building a VS Code extension for your favorite python tool. It could be a linter, formatter, or code analysis, or all of those together. This template will give you the basic building blocks you need to build a VS Code extension for it.
+MightyDev is a VSCode extension that creates an AI-native IDE powered by dynamic AI agents built with CrewAI.
 
-## Programming Languages and Frameworks
+## Features
 
-The extension template has two parts, the extension part and language server part. The extension part is written in TypeScript, and language server part is written in Python over the [_pygls_][pygls] (Python language server) library.
-
-For the most part you will be working on the python part of the code when using this template. You will be integrating your tool with the extension part using the [Language Server Protocol](https://microsoft.github.io/language-server-protocol). [_pygls_][pygls] currently works on the [version 3.16 of LSP](https://microsoft.github.io/language-server-protocol/specifications/specification-3-16/).
-
-The TypeScript part handles working with VS Code and its UI. The extension template comes with few settings pre configured that can be used by your tool. If you need to add new settings to support your tool, you will have to work with a bit of TypeScript. The extension has examples for few settings that you can follow. You can also look at extensions developed by our team for some of the popular tools as reference.
-
-## Requirements
-
-1. VS Code 1.64.0 or greater
-1. Python 3.8 or greater
-1. node >= 18.17.0
-1. npm >= 8.19.0 (`npm` is installed with node, check npm version, use `npm install -g npm@8.3.0` to update)
-1. Python extension for VS Code
-
-You should know to create and work with python virtual environments.
+- **AI-Powered Development Environment**: Use CrewAI to create a dynamic development environment with powerful AI agents
+- **Dynamic Agent System**: Agents can create additional agents, tasks, tools, and assign them to teams, crews, and workflows at runtime
+- **Project Management System**: Coordinated project management with multiple task execution modes (synchronous, asynchronous, parallel, concurrent)
+- **Learning System**: Three-part learning system leveraging CrewAI's memory capabilities: External Input, Reflection, and Feedback
+- **Notification System**: Comprehensive notification system for user awareness and human-in-the-loop workflows
+- **Code Generation & Editing**: AI-powered code generation with advanced diffing and code action capabilities
 
 ## Getting Started
 
-1. Use this [template to create your repo](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
-1. Check-out your repo locally on your development machine.
-1. Create and activate a python virtual environment for this project in a terminal. Be sure to use the minimum version of python for your tool. This template was written to work with python 3.8 or greater.
-1. Install `nox` in the activated environment: `python -m pip install nox`.
-1. Add your favorite tool to `requirements.in`
-1. Run `nox --session setup`.
-1. **Optional** Install test dependencies `python -m pip install -r src/test/python_tests/requirements.txt`. You will have to install these to run tests from the Test Explorer.
-1. Open `package.json`, look for and update the following things:
-    1. Find and replace `<pytool-module>` with module name for your tool. This will be used internally to create settings namespace, register commands, etc. Recommendation is to use lower case version of the name, no spaces, `-` are ok. For example, replacing `<pytool-module>` with `pylint` will lead to settings looking like `pylint.args`. Another example, replacing `<pytool-module>` with `black-formatter` will make settings look like `black-formatter.args`.
-    1. Find and replace `<pytool-display-name>` with display name for your tool. This is used as the title for the extension in market place, extensions view, output logs, etc. For example, for the `black` extension this is `Black Formatter`.
-1. Install node packages using `npm install`.
-1. Go to https://marketplace.visualstudio.com/vscode and create a publisher account if you don't already have one.
-    1. Use the published name in `package.json` by replacing `<my-publisher>` with the name you registered in the marketplace.
+1. Clone this repository
+2. Run the setup script to install required dependencies:
 
-## Features of this Template
+```bash
+cd /path/to/MightyDev/extensions/tribe
+python setup.py
+```
 
-After finishing the getting started part, this template would have added the following. Assume `<pytool-module>` was replaced with `mytool`, and `<pytool-display-name>` with`My Tool`:
+3. Build the extension:
 
-1. A command `My Tool: Restart Server` (command Id: `mytool.restart`).
-1. Following setting:
-    - `mytool.args`
-    - `mytool.path`
-    - `mytool.importStrategy`
-    - `mytool.interpreter`
-    - `mytool.showNotification`
-1. Following triggers for extension activation:
-    - On Language `python`.
-    - On File with `.py` extension found in the opened workspace.
-1. Following commands are registered:
-    - `mytool.restart`: Restarts the language server.
-1. Output Channel for logging `Output` > `My Tool`
+```bash
+npm install
+npm run build
+```
 
-## Adding features from your tool
+4. Press F5 in VS Code to start the extension in debug mode
+5. Enter your project description in the Getting Started screen
+6. Watch as MightyDev assembles a custom team of AI agents for your project
 
-Open `bundled/tool/lsp_server.py`, here is where you will do most of the changes. Look for `TODO` comments there for more details.
+### API Keys
 
-Also look for `TODO` in other locations in the entire template:
+MightyDev requires at least one of the following API keys:
+- **Anthropic API Key** (Recommended): Used for Claude models
+- **OpenAI API Key** (Fallback): Used as a fallback if Anthropic is unavailable
 
-- `bundled/tool/lsp_runner.py` : You may need to update this in some special cases.
-- `src/test/python_tests/test_server.py` : This is where you will write tests. There are two incomplete examples provided there to get you started.
-- All the markdown files in this template have some `TODO` items, be sure to check them out as well. That includes updating the LICENSE file, even if you want to keep it MIT License.
+The setup script will create a `.env` file where you can set your API keys.
 
-References, to other extension created by our team using the template:
+## Requirements
 
-- Protocol reference: <https://microsoft.github.io/language-server-protocol/specifications/specification-3-16/>
-- Implementation showing how to handle Linting on file `open`, `save`, and `close`. [Pylint](https://github.com/microsoft/vscode-pylint/tree/main/bundled/tool)
-- Implementation showing how to handle Formatting. [Black Formatter](https://github.com/microsoft/vscode-black-formatter/tree/main/bundled/tool)
-- Implementation showing how to handle Code Actions. [isort](https://github.com/microsoft/vscode-isort/blob/main/bundled/tool)
-
-## Building and Run the extension
-
-Run the `Debug Extension and Python` configuration form VS Code. That should build and debug the extension in host window.
-
-Note: if you just want to build you can run the build task in VS Code (`ctrl`+`shift`+`B`)
-
-## Debugging
-
-To debug both TypeScript and Python code use `Debug Extension and Python` debug config. This is the recommended way. Also, when stopping, be sure to stop both the Typescript, and Python debug sessions. Otherwise, it may not reconnect to the python session.
-
-To debug only TypeScript code, use `Debug Extension` debug config.
-
-To debug a already running server or in production server, use `Python Attach`, and select the process that is running `lsp_server.py`.
-
-## Logging and Logs
-
-The template creates a logging Output channel that can be found under `Output` > `mytool` panel. You can control the log level running the `Developer: Set Log Level...` command from the Command Palette, and selecting your extension from the list. It should be listed using the display name for your tool. You can also set the global log level, and that will apply to all extensions and the editor.
-
-If you need logs that involve messages between the Language Client and Language Server, you can set `"mytool.server.trace": "verbose"`, to get the messaging logs. These logs are also available `Output` > `mytool` panel.
-
-## Adding new Settings or Commands
-
-You can add new settings by adding details for the settings in `package.json` file. To pass this configuration to your python tool server (i.e, `lsp_server.py`) update the `settings.ts` as need. There are examples of different types of settings in that file that you can base your new settings on.
-
-You can follow how `restart` command is implemented in `package.json` and `extension.ts` for how to add commands. You can also contribute commands from Python via the Language Server Protocol.
-
-## Testing
-
-See `src/test/python_tests/test_server.py` for starting point. See, other referred projects here for testing various aspects of running the tool over LSP.
-
-If you have installed the test requirements you should be able to see the tests in the test explorer.
-
-You can also run all tests using `nox --session tests` command.
-
-## Linting
-
-Run `nox --session lint` to run linting on both Python and TypeScript code. Please update the nox file if you want to use a different linter and formatter.
-
-## Packaging and Publishing
-
-1. Update various fields in `package.json`. At minimum, check the following fields and update them accordingly. See [extension manifest reference](https://code.visualstudio.com/api/references/extension-manifest) to add more fields:
-    - `"publisher"`: Update this to your publisher id from <https://marketplace.visualstudio.com/>.
-    - `"version"`: See <https://semver.org/> for details of requirements and limitations for this field.
-    - `"license"`: Update license as per your project. Defaults to `MIT`.
-    - `"keywords"`: Update keywords for your project, these will be used when searching in the VS Code marketplace.
-    - `"categories"`: Update categories for your project, makes it easier to filter in the VS Code marketplace.
-    - `"homepage"`, `"repository"`, and `"bugs"` : Update URLs for these fields to point to your project.
-    - **Optional** Add `"icon"` field with relative path to a image file to use as icon for this project.
-1. Make sure to check the following markdown files:
-    - **REQUIRED** First time only: `CODE_OF_CONDUCT.md`, `LICENSE`, `SUPPORT.md`, `SECURITY.md`
-    - Every Release: `CHANGELOG.md`
-1. Build package using `nox --session build_package`.
-1. Take the generated `.vsix` file and upload it to your extension management page <https://marketplace.visualstudio.com/manage>.
-
-To do this from the command line see here <https://code.visualstudio.com/api/working-with-extensions/publishing-extension>
-
-## Upgrading Dependencies
-
-Dependabot yml is provided to make it easy to setup upgrading dependencies in this extension. Be sure to add the labels used in the dependabot to your repo.
-
-To manually upgrade your local project:
-
-1. Create a new branch
-1. Run `npm update` to update node modules.
-1. Run `nox --session setup` to upgrade python packages.
+- VSCode 1.78.0 or higher
+- Python 3.8 or higher (Python 3.10+ recommended)
+- NodeJS 16+ and npm
 
 ## Troubleshooting
 
-### Changing path or name of `lsp_server.py` something else
+If you encounter issues with the CrewAI server not starting:
 
-If you want to change the name of `lsp_server.py` to something else, you can. Be sure to update `constants.ts` and `src/test/python_tests/lsp_test_client/session.py`.
+1. Make sure you have API keys configured in your `.env` file
+2. Check the logs in the Output panel (View > Output > MightyDev)
+3. Try running the standalone server script:
 
-Also make sure that the inserted paths in `lsp_server.py` are pointing to the right folders to pick up the dependent packages.
+```bash
+cd /path/to/MightyDev/extensions/tribe
+python start_crewai_server.py
+```
 
-### Module not found errors
+If you're having library compatibility issues, you can manually set up the environment:
 
-This can occurs if `bundled/libs` is empty. That is the folder where we put your tool and other dependencies. Be sure to follow the build steps need for creating and bundling the required libs.
+```bash
+# Create a virtual environment
+python -m venv crewai_venv
 
-Common one is [_pygls_][pygls] module not found.
+# Activate it
+source crewai_venv/bin/activate  # On Windows: crewai_venv\Scripts\activate
 
-# TODO: The maintainer of this repo has not yet edited this file
+# Install the dependencies
+pip install uv
+uv pip install --python $(which python) crewai pygls lsprotocol cattrs
+```
+- Python extension for VSCode
 
-**Repo Owner** Make sure you update this. As a repository owner you will need to update this file with specific instructions for your extension.
+## Configuration
 
-[pygls]: https://github.com/openlawlibrary/pygls
+| Setting | Default | Description |
+| --- | --- | --- |
+| `mightydev.pythonPath` | `[]` | Path to the Python executable for running CrewAI server and agents |
+| `mightydev.defaultModelProvider` | `openai` | Default AI model provider for agents (`openai`, `anthropic`, `azure_openai`) |
+| `mightydev.defaultModelName` | `gpt-4` | Default model to use for agents |
+| `mightydev.showNotifications` | `onWarning` | Control when notifications are displayed (`off`, `onError`, `onWarning`, `always`) |
+| `mightydev.humanInTheLoop` | `true` | Whether to require human confirmation for impactful tasks |
+| `mightydev.logLevel` | `info` | Log level for MightyDev (`debug`, `info`, `warning`, `error`) |
+
+## Commands
+
+- **MightyDev: Open Tribe Dashboard** - Open the MightyDev Tribe dashboard
+- **MightyDev: Initialize Project** - Initialize a new project with MightyDev
+- **MightyDev: Reset Tribe** - Reset all MightyDev data for the current project
+
+## Project Persistence
+
+MightyDev stores project data in a `.tribe` folder in your project directory. This includes:
+- Agent metadata
+- Task information
+- Project configuration
+- Team structure
+- Learning system data
+
+## Agent System
+
+Agents in MightyDev have unique personalities and characteristics:
+- Character-like names (Sparks, Nova, Trinity, etc.)
+- Detailed descriptions and metadata
+- Unique stylistic properties (tone, learning style, working style, etc.)
+
+## Development
+
+### Setting up the development environment
+
+MightyDev provides a unified build system for both the extension and webview. The easiest way to set up your development environment is to use our build scripts:
+
+#### Using the build scripts (recommended)
+
+```bash
+# Unix/Linux/macOS
+./build.sh
+
+# Windows
+.\build.ps1
+```
+
+This will install all dependencies and build both the extension and webview components.
+
+For development mode with file watching:
+
+```bash
+# Unix/Linux/macOS
+./build.sh --dev
+
+# Windows
+.\build.ps1 -Dev
+```
+
+See [BUILD.md](BUILD.md) for detailed build instructions and options.
+
+#### Manual setup
+
+If you prefer to set up manually:
+
+1. Clone the repository
+2. Run `npm install` to install dependencies
+3. Run `npm run webview:install` to install webview dependencies
+4. Run `npm run compile` to compile the extension
+
+To run the extension in development mode:
+1. Open the repository in VSCode
+2. Press F5 to start debugging
+
+### Building the extension
+
+#### Using build scripts (recommended)
+
+To build a VSIX package:
+
+```bash
+# Unix/Linux/macOS
+./build.sh --package
+
+# Windows
+.\build.ps1 -Package
+```
+
+#### Manual build
+
+To build a VSIX package manually:
+1. Run `npm run vscode:prepublish` to prepare the extension
+2. Run `npm run vsce-package` to create the VSIX file
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

@@ -1,0 +1,136 @@
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1rem;
+}
+
+.crew-section {
+  border: 1px solid #e0e0e0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  background-color: #f9f9f9;
+}
+
+.crew-header {
+  font-size: 1.2rem;
+  color: #333;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.agent-tasks {
+  margin-bottom: 1rem;
+}
+
+.agent-header {
+  font-size: 1rem;
+  color: #555;
+  margin-bottom: 0.5rem;
+}
+
+.tasks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.task-card {
+  background-color: white;
+  border-radius: 0.4rem;
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.task-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.task-card.pending {
+  border-left: 4px solid #f59e0b;
+}
+
+.task-card.in-progress {
+  border-left: 4px solid #3b82f6;
+}
+
+.task-card.completed {
+  border-left: 4px solid #10b981;
+}
+
+.task-card.blocked {
+  border-left: 4px solid #ef4444;
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.task-header h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.task-description {
+  color: #666;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.task-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.priority-badge, .status-badge {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 1rem;
+  text-transform: uppercase;
+}
+
+.priority-badge.high {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}
+
+.priority-badge.medium {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.priority-badge.low {
+  background-color: #e0f2fe;
+  color: #0369a1;
+}
+
+.status-badge {
+  font-weight: bold;
+}
+
+.status-badge.pending {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge.in-progress {
+  background-color: #dbeafe;
+  color: #1d4ed8;
+}
+
+.status-badge.completed {
+  background-color: #d1fae5;
+  color: #047857;
+}
+
+.status-badge.blocked {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}

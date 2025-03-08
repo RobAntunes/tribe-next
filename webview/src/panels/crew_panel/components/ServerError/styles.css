@@ -1,0 +1,119 @@
+.server-error-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(15, 23, 42, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    backdrop-filter: blur(4px);
+}
+
+.server-error-container {
+    background-color: #1e293b;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    width: 90%;
+    max-width: 500px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    border: 1px solid #334155;
+}
+
+.server-error-icon {
+    margin-bottom: 16px;
+}
+
+.server-error-content {
+    width: 100%;
+    text-align: center;
+}
+
+.server-error-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #f8fafc;
+    margin-bottom: 12px;
+}
+
+.server-error-message {
+    font-size: 1rem;
+    color: #cbd5e1;
+    margin-bottom: 16px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.server-error-tip {
+    font-size: 0.875rem;
+    color: #94a3b8;
+    margin-bottom: 24px;
+    padding: 12px;
+    background-color: #334155;
+    border-radius: 4px;
+    border-left: 4px solid #e67e22;
+}
+
+.server-error-actions {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+}
+
+.server-error-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.server-error-button.retry {
+    background-color: #1d4ed8;
+    color: white;
+    border: none;
+}
+
+.server-error-button.retry:hover {
+    background-color: #1e40af;
+}
+
+.server-error-button.settings {
+    background-color: #0ea5e9;
+    color: white;
+    border: none;
+}
+
+.server-error-button.settings:hover {
+    background-color: #0284c7;
+}
+
+.server-error-button.setup {
+    background-color: #10b981;
+    color: white;
+    border: none;
+}
+
+.server-error-button.setup:hover {
+    background-color: #059669;
+}
+
+.server-error-button.close {
+    background-color: transparent;
+    color: #94a3b8;
+    border: 1px solid #475569;
+}
+
+.server-error-button.close:hover {
+    background-color: #334155;
+    color: #f8fafc;
+}

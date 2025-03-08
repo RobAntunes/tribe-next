@@ -65,3 +65,36 @@ export async function getProjectRoot(): Promise<WorkspaceFolder> {
         return rootWorkspace;
     }
 }
+
+/**
+ * Generates a nonce (number used once) for security purposes
+ * This is used to ensure that only specific scripts can run in the webview
+ */
+export function getNonce(): string {
+    let text = '';
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 32; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+}
+
+/**
+ * Checks if a given project has been initialized with MightyDev
+ * @param projectPath Path to the project root
+ */
+export async function isProjectInitialized(projectPath: string): Promise<boolean> {
+    try {
+        const tribeFolderPath = path.join(projectPath, '.tribe');
+        const projectFilePath = path.join(tribeFolderPath, 'project.json');
+        
+        if (await fs.pathExists(projectFilePath)) {
+            const projectData = await fs.readJson(projectFilePath);
+            return projectData.initialized === true;
+        }
+        
+        return false;
+    } catch (error) {
+        return false;
+    }
+}

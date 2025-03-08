@@ -12,4 +12,8 @@
 pygls
 packaging
 
-# TODO: Add your tool here
+# MightyDev packages
+crewai>=1.0.0
+langchain>=0.1.0
+openai>=1.0.0
+anthropic>=0.8.0
