@@ -1559,6 +1559,7 @@
     padding: var(--space-4);
     overflow-y: auto;
     background-color: var(--vscode-editor-background);
+    color: var(--vscode-foreground);
     border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 

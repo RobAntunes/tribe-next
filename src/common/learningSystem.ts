@@ -6,6 +6,8 @@ import * as path from 'path';
 import * as fs from 'fs-extra';
 import { TRIBE_FOLDER } from './constants';
 import { traceError, traceInfo, traceDebug } from './log/logging';
+import { CrewAIExtension } from './crewAIExtension';
+import { storeMemory, getProjectMetadata } from './utilities';
 
 /**
  * Interface for an Experience
@@ -321,10 +323,235 @@ export class LearningSystem {
                 });
             }
             
+            // Store the summary in the memory system
+            if (this._projectPath) {
+                await storeMemory(
+                    this._projectPath,
+                    'reflection',
+                    {
+                        agent_id: agentId,
+                        summary,
+                        insights: insights.length,
+                        feedback: feedback.length,
+                        reflections: reflections.length,
+                        content: summary
+                    }
+                );
+            }
+            
             return summary;
         } catch (error) {
             traceError('Failed to generate learning summary:', error);
             return 'Error generating learning summary.';
+        }
+    }
+    
+    /**
+     * Get learning summary as metadata for CrewAI agent prompts
+     * This is used to connect the learning system with CrewAI's memory
+     * @param agentId Agent ID to get learning for
+     */
+    public async getLearningSummaryAsMetadata(agentId: string): Promise<string> {
+        try {
+            const insights = this.getInsights(agentId);
+            const feedback = this.getFeedback(agentId);
+            
+            // Create a concise summary that can be attached to agent prompts
+            let metadata = `# Learning Summary\n`;
+            
+            // Add key insights
+            if (insights.length > 0) {
+                metadata += `## Key Insights\n`;
+                insights
+                    .sort((a, b) => b.confidence - a.confidence) // Sort by confidence
+                    .slice(0, 3) // Get top 3
+                    .forEach(insight => {
+                        metadata += `- ${insight.learning}\n`;
+                    });
+            }
+            
+            // Add feedback lessons
+            if (feedback.length > 0) {
+                metadata += `## Feedback Lessons\n`;
+                
+                // Get improvement feedback
+                const improvementFeedback = feedback
+                    .filter(f => f.feedback_type === 'improvement')
+                    .slice(0, 2);
+                
+                if (improvementFeedback.length > 0) {
+                    improvementFeedback.forEach(f => {
+                        metadata += `- Improvement: ${f.content}\n`;
+                    });
+                }
+                
+                // Get correction feedback
+                const correctionFeedback = feedback
+                    .filter(f => f.feedback_type === 'correction')
+                    .slice(0, 2);
+                
+                if (correctionFeedback.length > 0) {
+                    correctionFeedback.forEach(f => {
+                        metadata += `- Correction: ${f.content}\n`;
+                    });
+                }
+            }
+            
+            return metadata;
+        } catch (error) {
+            traceError('Failed to get learning summary as metadata:', error);
+            return '';
+        }
+    }
+    
+    /**
+     * Create a reflection with CrewAI
+     * This method uses the CrewAI server to analyze experiences and create a reflection
+     */
+    public async createReflectionWithCrewAI(crewaiExtension: CrewAIExtension, agentId: string, topic: string): Promise<Reflection | null> {
+        try {
+            if (!this._projectPath) {
+                throw new Error('Project path not set');
+            }
+            
+            // Get experiences for this agent
+            const experiences = this.getExperiences(agentId);
+            
+            if (experiences.length === 0) {
+                traceInfo(`No experiences found for agent ${agentId} to reflect on`);
+                return null;
+            }
+            
+            // Structure the experiences for the agent to analyze
+            const experiencesText = experiences
+                .slice(-10) // Get the last 10 experiences
+                .map(e => {
+                    return `- Context: ${e.context}\n  Decision: ${e.decision}\n  Outcome: ${e.outcome}`;
+                })
+                .join('\n\n');
+            
+            // Send a request to the CrewAI server to analyze the experiences
+            const response = await crewaiExtension.sendRequest('send_message', {
+                agent_id: agentId,
+                message: `Please analyze the following experiences and create a reflection on the topic "${topic}":\n\n${experiencesText}\n\nProvide 3-5 insights from these experiences and a 2-3 step action plan.`
+            });
+            
+            if (response.status === 'completed' && response.response) {
+                // Parse the reflection from the response
+                const reflectionText = response.response;
+                
+                // Extract insights and action plan
+                const insightsMatch = reflectionText.match(/Insights:([\s\S]*?)(?:Action Plan:|$)/i);
+                const actionPlanMatch = reflectionText.match(/Action Plan:([\s\S]*?)(?:$)/i);
+                
+                const insights = insightsMatch ? 
+                    insightsMatch[1].split('\n')
+                        .map((line: string) => line.trim())
+                        .filter((line: string) => line.startsWith('-') || line.startsWith('*'))
+                        .map((line: string) => line.replace(/^[*-]\s*/, ''))
+                        .filter((line: string) => line.length > 0) : 
+                    [];
+                
+                const actionPlan = actionPlanMatch ? 
+                    actionPlanMatch[1].split('\n')
+                        .map((line: string) => line.trim())
+                        .filter((line: string) => line.startsWith('-') || line.startsWith('*'))
+                        .map((line: string) => line.replace(/^[*-]\s*/, ''))
+                        .filter((line: string) => line.length > 0) : 
+                    [];
+                
+                // Create the reflection
+                const reflection: Reflection = {
+                    id: `reflection-${Date.now()}`,
+                    agent_id: agentId,
+                    focus: topic,
+                    insights,
+                    action_plan: actionPlan,
+                    created_at: new Date().toISOString()
+                };
+                
+                // Save the reflection
+                await this.createReflection(reflection);
+                
+                // Store in the project memory system
+                await storeMemory(
+                    this._projectPath,
+                    'reflection',
+                    {
+                        agent_id: agentId,
+                        focus: topic,
+                        insights: insights.join('\n'),
+                        action_plan: actionPlan.join('\n'),
+                        content: reflectionText
+                    }
+                );
+                
+                traceInfo(`Created reflection for agent ${agentId} on topic ${topic}`);
+                return reflection;
+            } else {
+                traceError('Failed to get reflection from CrewAI:', response);
+                return null;
+            }
+        } catch (error) {
+            traceError('Failed to create reflection with CrewAI:', error);
+            return null;
+        }
+    }
+    
+    /**
+     * Add agent learning to CrewAI prompt
+     * This method prepares a context section to be added to agent prompts
+     */
+    public async getAgentLearningContext(agentId: string): Promise<string> {
+        try {
+            // Get insights, reflections and recent feedback
+            const insights = this.getInsights(agentId).sort((a, b) => {
+                // Sort by confidence and then by date
+                if (b.confidence !== a.confidence) {
+                    return b.confidence - a.confidence;
+                }
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+            }).slice(0, 5);
+            
+            const reflections = this.getReflections(agentId)
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                .slice(0, 3);
+            
+            const feedback = this.getFeedback(agentId)
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                .slice(0, 5);
+            
+            // Construct context
+            let context = `## Agent Learning Context\n\n`;
+            
+            if (insights.length > 0) {
+                context += `### Key Insights\n`;
+                insights.forEach(insight => {
+                    context += `- ${insight.learning}\n`;
+                });
+                context += '\n';
+            }
+            
+            if (reflections.length > 0) {
+                context += `### Recent Reflections\n`;
+                reflections.forEach(reflection => {
+                    context += `- ${reflection.focus}: ${reflection.insights[0] || 'No specific insight'}\n`;
+                });
+                context += '\n';
+            }
+            
+            if (feedback.length > 0) {
+                context += `### Feedback to Incorporate\n`;
+                feedback.forEach(f => {
+                    context += `- ${f.feedback_type.charAt(0).toUpperCase() + f.feedback_type.slice(1)}: ${f.content}\n`;
+                });
+                context += '\n';
+            }
+            
+            return context;
+        } catch (error) {
+            traceError('Failed to get agent learning context:', error);
+            return '';
         }
     }
     

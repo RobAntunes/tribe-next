@@ -1,6 +1,7 @@
 @import '../common/styles.css';
 
 /* LearningSystem component styles */
+/* Adding styles for the visualization tab */
 .learning-system {
   display: flex;
   flex-direction: column;
@@ -231,6 +232,92 @@
   gap: var(--space-2);
 }
 
+/* Memory Visualization tab styles */
+.visualization-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.visualization-tab .tab-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.visualization-info {
+  padding: var(--space-2) var(--space-3);
+  background-color: color-mix(in srgb, var(--tribe-info) 10%, transparent);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  margin-left: var(--space-2);
+  flex: 1;
+}
+
+.visualization-info p {
+  margin: 0;
+}
+
+.memory-visualization-wrapper {
+  flex: 1;
+  min-height: 400px;
+  overflow: hidden;
+  display: flex;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-md);
+}
+
+/* Additional styles for feedback tab, insights, and reflections */
+.feedback-type-improvement {
+  background-color: color-mix(in srgb, var(--tribe-info) 15%, transparent);
+  color: var(--tribe-info);
+}
+
+.feedback-type-praise {
+  background-color: color-mix(in srgb, var(--tribe-success) 15%, transparent);
+  color: var(--tribe-success);
+}
+
+.feedback-type-correction {
+  background-color: color-mix(in srgb, var(--tribe-warning) 15%, transparent);
+  color: var(--tribe-warning);
+}
+
+.insight-confidence, 
+.reflection-focus, 
+.feedback-flow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+}
+
+.insight-confidence {
+  color: var(--tribe-success);
+}
+
+.reflection-focus {
+  padding: var(--space-1) var(--space-2);
+  background-color: color-mix(in srgb, var(--tribe-secondary) 15%, transparent);
+  color: var(--tribe-secondary);
+  border-radius: var(--radius-full);
+}
+
+.source-experiences-list {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-4);
+  font-size: var(--font-size-xs);
+}
+
+.source-experiences-list li {
+  margin-bottom: var(--space-1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .pattern-stats {
@@ -238,15 +325,36 @@
   }
 
   .experience-header,
-  .pattern-header {
+  .pattern-header,
+  .insight-header,
+  .reflection-header,
+  .feedback-header {
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-2);
   }
 
   .experience-meta,
-  .pattern-meta {
+  .pattern-meta,
+  .insight-meta,
+  .reflection-meta,
+  .feedback-meta {
     width: 100%;
     justify-content: space-between;
+  }
+  
+  .visualization-tab .tab-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+  
+  .visualization-info {
+    margin-left: 0;
+    margin-top: var(--space-2);
+  }
+  
+  .memory-visualization-wrapper {
+    min-height: 300px;
   }
 }

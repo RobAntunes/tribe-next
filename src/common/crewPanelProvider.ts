@@ -89,8 +89,60 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
         this._extensionUri = _context.extensionUri;
         this._projectPath = _workspaceRoot;
         
-        // Load persisted state if it exists
-        this._loadState();
+        // Find the root project path and update _projectPath
+        this._findRootProjectPath().then(() => {
+            // Load persisted state if it exists
+            this._loadState();
+            
+            // Load project vision from project.json if available
+            this._loadProjectVision();
+        });
+    }
+    
+    /**
+     * Find the root project path and update _projectPath
+     */
+    private async _findRootProjectPath(): Promise<void> {
+        if (!this._workspaceRoot) {
+            return;
+        }
+        
+        try {
+            // Import the findRootProjectPath function
+            const { findRootProjectPath } = await import('./utilities');
+            
+            // Find the root project path
+            const rootPath = await findRootProjectPath(this._workspaceRoot);
+            if (rootPath !== this._workspaceRoot) {
+                traceInfo(`Found root project path: ${rootPath}`);
+                this._projectPath = rootPath;
+            }
+        } catch (error) {
+            traceError('Error finding root project path:', error);
+        }
+    }
+    
+    /**
+     * Load project vision from project.json
+     */
+    private async _loadProjectVision(): Promise<void> {
+        if (!this._projectPath) {
+            return;
+        }
+        
+        try {
+            // Import the getProjectVision function
+            const { getProjectVision } = await import('./utilities');
+            
+            // Get the project vision
+            const vision = await getProjectVision(this._projectPath);
+            if (vision) {
+                this._projectVision = vision;
+                traceInfo(`Loaded project vision: ${vision.substring(0, 50)}...`);
+            }
+        } catch (error) {
+            traceError('Error loading project vision:', error);
+        }
     }
 
     public resolveWebviewView(
@@ -151,6 +203,24 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'TOGGLE_LEARNING_SYSTEM':
                     await this._toggleLearningSystem(message.payload.enabled);
+                    break;
+                case 'APPLY_CODE':
+                    await this._handleApplyCode(message.payload);
+                    break;
+                case 'PREVIEW_DIFF':
+                    await this._handlePreviewDiff(message.payload);
+                    break;
+                case 'REACT_TO_MESSAGE':
+                    await this._handleReactToMessage(message.payload);
+                    break;
+                case 'VIEW_THREAD':
+                    await this._handleViewThread(message.payload);
+                    break;
+                case 'REPLY_TO_MESSAGE':
+                    await this._handleReplyToMessage(message.payload);
+                    break;
+                case 'DOWNLOAD_FILE':
+                    await this._handleDownloadFile(message.payload);
                     break;
                 case 'RESET_TRIBE':
                     await this._resetTribe();
@@ -251,6 +321,7 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
         this._activeAgents = [];
         this._currentPhase = '';
         this._projectVision = '';
+        this._messages = []; // Clear messages too
 
         // Clear persisted state if it exists
         if (this._projectPath) {
@@ -274,6 +345,9 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
         traceInfo('Initializing project with data: ', projectData);
         
         try {
+            // First, find the root project path to avoid duplicate .tribe folders
+            await this._findRootProjectPath();
+            
             // Create .tribe folder if it doesn't exist
             if (this._projectPath) {
                 const tribeFolderPath = path.join(this._projectPath, TRIBE_FOLDER);
@@ -281,10 +355,27 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                 
                 // Save project data
                 const projectFilePath = path.join(tribeFolderPath, 'project.json');
+                
+                // Read existing file if it exists to preserve any other fields
+                let projectJson = {};
+                try {
+                    if (await fs.pathExists(projectFilePath)) {
+                        projectJson = await fs.readJson(projectFilePath);
+                    }
+                } catch (readError) {
+                    traceError('Error reading existing project.json:', readError);
+                    // Continue with empty object
+                }
+                
+                // Update with new values
                 await fs.writeJson(projectFilePath, {
+                    ...projectJson,
                     vision: projectData.description,
                     initialized: true,
-                    createdAt: new Date().toISOString()
+                    userInitialized: true, // This is the new flag to indicate user initialization
+                    state: 'initialized',
+                    lastModified: new Date().toISOString(),
+                    createdAt: (projectJson as any).createdAt || new Date().toISOString()
                 }, { spaces: 2 });
             }
             
@@ -613,7 +704,7 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
             - These agents will dynamically generate additional agents, tasks, and tools at runtime
             - The project makes extensive use of CrewAI for dynamic agentic environments
             
-            IMPORTANT: Format your response as a JSON object with this structure:
+            IMPORTANT: You MUST use the structured_json_output tool to format your response. Structure your output exactly as follows:
             {
               "agents": [
                 {
@@ -645,6 +736,10 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
             Include 4-7 initial tasks that implement the first phase of the project, with detailed descriptions.
             Make sure the team includes diverse expertise including architecture, UI/UX, agent development, 
             and systems integration to build this AI-native IDE using CrewAI.
+            
+            YOU MUST USE THE STRUCTURED_JSON_OUTPUT TOOL TO ENSURE YOUR RESPONSE IS PROPERLY FORMATTED.
+            
+            DO NOT RETURN TEXT CONTENT. ONLY USE THE structured_json_output TOOL.
             `;
             
             // For storing the team data
@@ -904,18 +999,164 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                     traceError('Error parsing foundation model response:', jsonError);
                     traceError('Raw response:', modelResponse.response);
                     
-                    // Make one more attempt using a fixed response format
-                    try {
-                        // Look for content within triple backticks
-                        const codeBlockMatch = modelResponse.response.match(/```(?:json)?([\s\S]*?)```/);
-                        if (codeBlockMatch && codeBlockMatch[1]) {
-                            const jsonText = codeBlockMatch[1].trim();
-                            teamData = JSON.parse(jsonText) as TeamData;
-                        } else {
-                            throw new Error('Failed to extract JSON from code blocks');
+                    // Make multiple attempts with different parsing strategies
+                    const parsingStrategies = [
+                        // Strategy 1: Look for content within triple backticks
+                        (text: string) => {
+                            const codeBlockMatch = text.match(/```(?:json)?([\s\S]*?)```/);
+                            if (codeBlockMatch && codeBlockMatch[1]) {
+                                return JSON.parse(codeBlockMatch[1].trim());
+                            }
+                            throw new Error('No JSON in code blocks');
+                        },
+                        
+                        // Strategy 2: Try to find anything that looks like a JSON object
+                        (text: string) => {
+                            const jsonMatch = text.match(/{[\s\S]*}/);
+                            if (jsonMatch) {
+                                return JSON.parse(jsonMatch[0]);
+                            }
+                            throw new Error('No JSON-like patterns found');
+                        },
+                        
+                        // Strategy 3: Try to extract JSON by relaxing parsing (replace quotes, fix commas)
+                        (text: string) => {
+                            // Replace smart quotes with regular quotes
+                            let fixedText = text.replace(/[""]/g, '"');
+                            // Fix trailing commas in arrays and objects
+                            fixedText = fixedText.replace(/,(\s*[\]}])/g, '$1');
+                            
+                            const jsonMatch = fixedText.match(/{[\s\S]*}/);
+                            if (jsonMatch) {
+                                return JSON.parse(jsonMatch[0]);
+                            }
+                            throw new Error('No parseable JSON found after fixing quotes and commas');
+                        },
+                        
+                        // Strategy 4: Use fallback hardcoded team if all else fails
+                        (_: string) => {
+                            traceInfo("Using fallback team data as last resort");
+                            usedFallbackTeam = true;
+                            return {
+                                agents: [
+                                    {
+                                        name: "Nova",
+                                        role: "Lead Architect",
+                                        goal: "Design and implement the core architecture for the AI-native IDE",
+                                        description: "Nova is a seasoned software architect specializing in AI systems. She excels at designing scalable architectures that support dynamic agent interactions.",
+                                        backstory: "With a background in distributed systems and AI research, Nova has pioneered several innovative agent-based architectures. She's passionate about creating systems that are both powerful and intuitive.",
+                                        skills: ["System Design", "Architecture Planning", "CrewAI Integration", "Python Development", "Agent Design", "Technical Leadership"],
+                                        communicationStyle: "Clear and precise with a focus on technical accuracy",
+                                        workingStyle: "Methodical and thorough, with careful consideration of all system implications",
+                                        quirks: ["Uses architectural metaphors", "Visualizes systems as living organisms"],
+                                        autonomyLevel: 0.9
+                                    },
+                                    {
+                                        name: "Sparks",
+                                        role: "Agent Developer",
+                                        goal: "Create intelligent, adaptive AI agents that work together seamlessly",
+                                        description: "Sparks specializes in developing AI agents with unique personalities and capabilities. He crafts agents that can solve complex problems through collaboration.",
+                                        backstory: "A former game AI developer, Sparks discovered his passion for creating lifelike agent behaviors. He believes that giving agents distinct personalities makes them more effective problem-solvers.",
+                                        skills: ["Agent Creation", "NLP", "Prompt Engineering", "Python", "CrewAI", "Behavioral Design"],
+                                        communicationStyle: "Enthusiastic and imaginative, often anthropomorphizing the agents",
+                                        workingStyle: "Iterative with rapid prototyping and constant refinement",
+                                        quirks: ["Names all his agent prototypes", "Tests agents with creative scenarios"],
+                                        autonomyLevel: 0.8
+                                    },
+                                    {
+                                        name: "Trinity",
+                                        role: "UI/UX Designer",
+                                        goal: "Create an intuitive interface that makes AI agent interactions transparent and accessible",
+                                        description: "Trinity designs interfaces that make complex AI interactions feel natural and intuitive. She bridges the gap between advanced AI capabilities and human-centered design.",
+                                        backstory: "Trinity began her career designing interfaces for scientific applications before specializing in AI systems. She's driven by the challenge of making complex technologies accessible to all users.",
+                                        skills: ["Interface Design", "User Experience", "Frontend Development", "Visual Design", "User Testing", "Accessibility"],
+                                        communicationStyle: "Empathetic and user-focused, translating technical concepts into relatable terms",
+                                        workingStyle: "Design-thinking approach with emphasis on user testing and iteration",
+                                        quirks: ["Sketches interfaces on any available surface", "Creates personas for different user types"],
+                                        autonomyLevel: 0.7
+                                    },
+                                    {
+                                        name: "Nexus",
+                                        role: "Systems Integrator",
+                                        goal: "Ensure seamless integration between all components of the AI-native IDE",
+                                        description: "Nexus specializes in connecting disparate systems into cohesive wholes. He ensures that all components of the IDE communicate effectively and efficiently.",
+                                        backstory: "With experience in both frontend and backend development, Nexus developed a talent for seeing the big picture. He finds satisfaction in making complex systems work together harmoniously.",
+                                        skills: ["System Integration", "API Development", "DevOps", "Testing", "Debugging", "Documentation"],
+                                        communicationStyle: "Balanced and comprehensive, focusing on connections between components",
+                                        workingStyle: "Systematic and thorough, with careful testing of all integration points",
+                                        quirks: ["Uses network metaphors", "Creates elaborate integration diagrams"],
+                                        autonomyLevel: 0.85
+                                    }
+                                ],
+                                tasks: [
+                                    {
+                                        title: "Set up project foundation",
+                                        description: "Initialize the project structure, set up the development environment, and configure the basic toolchain",
+                                        priority: "high",
+                                        assignee: "Nova"
+                                    },
+                                    {
+                                        title: "Implement core CrewAI integration",
+                                        description: "Develop the base integration with CrewAI to enable dynamic agent creation and management",
+                                        priority: "high",
+                                        assignee: "Sparks"
+                                    },
+                                    {
+                                        title: "Design main UI components",
+                                        description: "Create the key UI components for the IDE, including the agent interaction panel and task visualization system",
+                                        priority: "medium",
+                                        assignee: "Trinity"
+                                    },
+                                    {
+                                        title: "Build API layer for agent communication",
+                                        description: "Develop the API layer that will enable communication between the IDE, agents, and external tools",
+                                        priority: "medium",
+                                        assignee: "Nexus"
+                                    },
+                                    {
+                                        title: "Implement agent bootstrapping process",
+                                        description: "Create the initialization process that allows agents to generate additional agents based on project requirements",
+                                        priority: "medium",
+                                        assignee: "Sparks"
+                                    }
+                                ],
+                                summary: "This team combines expertise in architecture, agent development, UI/UX, and systems integration to build the foundation of an AI-native IDE. The initial phase focuses on establishing the core infrastructure, CrewAI integration, and basic UI components to enable dynamic agent creation and management."
+                            };
                         }
-                    } catch (finalParseError) {
-                        traceError('Final parsing attempt failed:', finalParseError);
+                    ];
+                    
+                    // Mark our fallback strategy for clarity
+                    const fallbackStrategy = parsingStrategies[3];
+                    Object.defineProperty(fallbackStrategy, 'strategyName', { value: 'fallbackData' });
+                    
+                    // Try each strategy until one works
+                    for (const strategy of parsingStrategies) {
+                        try {
+                            teamData = strategy(modelResponse.response) as TeamData;
+                            
+                            // Validate the team data has the minimum required fields
+                            if (teamData && 
+                                Array.isArray(teamData.agents) && teamData.agents.length > 0 &&
+                                Array.isArray(teamData.tasks) && teamData.tasks.length > 0) {
+                                
+                                traceInfo(`Successfully parsed team data using strategy: ${strategy.name || 'unnamed'}`);
+                                break; // Exit the loop if we succeed with valid data
+                            } else if ((strategy as any).strategyName === 'fallbackData') {
+                                // This is the hardcoded fallback data which we know is valid
+                                traceInfo(`Using fallback team data as last resort`);
+                                break;
+                            } else {
+                                traceError(`Parsed data is missing required fields:`, teamData);
+                                // Continue to next strategy as this didn't produce valid data
+                            }
+                        } catch (strategyError) {
+                            traceError(`Parsing strategy failed:`, strategyError);
+                            // Continue to next strategy
+                        }
+                    }
+                    
+                    // If we still don't have team data, give up
+                    if (!teamData) {
                         throw new Error('Failed to parse team data from model response after multiple attempts');
                     }
                 }
@@ -1410,6 +1651,418 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
             }
         });
     }
+    
+    /**
+     * Handles applying code from chat to the editor
+     */
+    private async _handleApplyCode(payload: { code: string; language: string }): Promise<void> {
+        try {
+            // Extract code and language from payload
+            const { code, language } = payload;
+            
+            if (!code) {
+                throw new Error('No code provided to apply');
+            }
+            
+            // Determine the language ID for the new document
+            let languageId = 'plaintext';
+            switch (language.toLowerCase()) {
+                case 'js':
+                case 'javascript':
+                    languageId = 'javascript';
+                    break;
+                case 'ts':
+                case 'typescript':
+                    languageId = 'typescript';
+                    break;
+                case 'py':
+                case 'python':
+                    languageId = 'python';
+                    break;
+                case 'html':
+                    languageId = 'html';
+                    break;
+                case 'css':
+                    languageId = 'css';
+                    break;
+                case 'json':
+                    languageId = 'json';
+                    break;
+                default:
+                    // Try to use the provided language string directly if it's not one of the common ones
+                    languageId = language || 'plaintext';
+            }
+            
+            // Create and show a new text document with the code
+            const document = await vscode.workspace.openTextDocument({
+                content: code,
+                language: languageId
+            });
+            
+            await vscode.window.showTextDocument(document);
+            
+            // Show success message
+            vscode.window.showInformationMessage('Code applied to new document');
+            
+        } catch (error) {
+            traceError('Error applying code to editor:', error);
+            vscode.window.showErrorMessage(`Failed to apply code: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    
+    /**
+     * Handles previewing diff of code from chat
+     */
+    private async _handlePreviewDiff(payload: { code: string; language: string }): Promise<void> {
+        try {
+            // Extract code and language from payload
+            const { code, language } = payload;
+            
+            if (!code) {
+                throw new Error('No code provided for diff preview');
+            }
+            
+            // We need to get the active editor to generate a diff
+            const activeEditor = vscode.window.activeTextEditor;
+            
+            if (!activeEditor) {
+                // If no active editor, just open the code in a new document
+                await this._handleApplyCode(payload);
+                vscode.window.showInformationMessage('No active editor to compare with. Opened code in new document.');
+                return;
+            }
+            
+            // Get the document's content and language
+            const existingCode = activeEditor.document.getText();
+            const existingLanguage = activeEditor.document.languageId;
+            
+            // If languages don't match, warn the user
+            if (language && language.toLowerCase() !== existingLanguage.toLowerCase()) {
+                vscode.window.showWarningMessage(`Language mismatch: Comparing ${language} code with ${existingLanguage} file.`);
+            }
+            
+            // Open a diff editor comparing the existing file with the generated code
+            const uri = activeEditor.document.uri;
+            
+            // Create a temporary document with the generated code
+            const tempFileUri = uri.with({ scheme: 'untitled', path: uri.path + '.generated' });
+            
+            // Create and open the temp document
+            const tempDocument = await vscode.workspace.openTextDocument(tempFileUri);
+            const tempEditor = await vscode.window.showTextDocument(tempDocument);
+            
+            // Insert the generated code
+            await tempEditor.edit(editBuilder => {
+                const fullRange = new vscode.Range(
+                    tempDocument.positionAt(0),
+                    tempDocument.positionAt(tempDocument.getText().length)
+                );
+                editBuilder.replace(fullRange, code);
+            });
+            
+            // Open the diff editor
+            await vscode.commands.executeCommand('vscode.diff', 
+                uri, 
+                tempFileUri, 
+                `Current ↔ Generated (${uri.fsPath.split('/').pop()})`
+            );
+            
+        } catch (error) {
+            traceError('Error previewing code diff:', error);
+            vscode.window.showErrorMessage(`Failed to preview diff: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    
+    /**
+     * Handles reacting to a message
+     */
+    private async _handleReactToMessage(payload: { messageId: string; emoji: string; userId?: string }): Promise<void> {
+        try {
+            // Extract messageId and emoji from payload
+            const { messageId, emoji, userId } = payload;
+            
+            if (!messageId || !emoji) {
+                throw new Error('Message ID and emoji are required');
+            }
+            
+            // Load messages from storage
+            await this._loadMessages();
+            
+            // Find the message in stored messages
+            const messageIndex = this._messages.findIndex(m => m.id === messageId);
+            if (messageIndex < 0) {
+                throw new Error(`Message with ID ${messageId} not found`);
+            }
+            
+            // Get the message
+            const message = this._messages[messageIndex];
+            
+            // Initialize reactions array if it doesn't exist
+            if (!message.reactions) {
+                message.reactions = [];
+            }
+            
+            // Find if this emoji reaction already exists
+            const reactionIndex = message.reactions.findIndex((r: any) => r.emoji === emoji);
+            
+            // Determine the user ID
+            const reactingUserId = userId || 'current-user';
+            
+            if (reactionIndex >= 0) {
+                // Check if user already reacted with this emoji
+                const userIndex = message.reactions[reactionIndex].users.indexOf(reactingUserId);
+                
+                if (userIndex >= 0) {
+                    // User already reacted - remove the reaction
+                    message.reactions[reactionIndex].users.splice(userIndex, 1);
+                    message.reactions[reactionIndex].count--;
+                    
+                    // Remove the reaction completely if no users left
+                    if (message.reactions[reactionIndex].count <= 0) {
+                        message.reactions.splice(reactionIndex, 1);
+                    }
+                } else {
+                    // Add user to existing reaction
+                    message.reactions[reactionIndex].users.push(reactingUserId);
+                    message.reactions[reactionIndex].count++;
+                }
+            } else {
+                // Create a new reaction
+                message.reactions.push({
+                    emoji,
+                    count: 1,
+                    users: [reactingUserId]
+                });
+            }
+            
+            // Update the message in the array
+            this._messages[messageIndex] = message;
+            
+            // Save updated messages
+            await this._saveMessages();
+            
+            // Notify the webview about the reaction update
+            this.postMessage({
+                type: 'MESSAGE_REACTION_UPDATED',
+                payload: {
+                    messageId,
+                    reactions: message.reactions
+                }
+            });
+            
+        } catch (error) {
+            traceError('Error handling message reaction:', error);
+            vscode.window.showErrorMessage(`Failed to add reaction: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    
+    /**
+     * Handles viewing a thread
+     */
+    private async _handleViewThread(payload: { threadId: string }): Promise<void> {
+        try {
+            // Extract threadId from payload
+            const { threadId } = payload;
+            
+            if (!threadId) {
+                throw new Error('Thread ID is required');
+            }
+            
+            // Load messages from storage
+            await this._loadMessages();
+            
+            // Find all messages in this thread
+            const threadMessages = this._messages.filter(m => m.threadId === threadId);
+            
+            if (threadMessages.length === 0) {
+                throw new Error(`Thread with ID ${threadId} not found`);
+            }
+            
+            // Notify the webview about the thread
+            this.postMessage({
+                type: 'THREAD_VIEW',
+                payload: {
+                    threadId,
+                    messages: threadMessages
+                }
+            });
+            
+        } catch (error) {
+            traceError('Error loading thread:', error);
+            vscode.window.showErrorMessage(`Failed to load thread: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    
+    /**
+     * Handles replying to a message
+     */
+    private async _handleReplyToMessage(payload: { 
+        messageId: string; 
+        content: string; 
+        threadId?: string; 
+        from?: string;
+        to?: string;
+    }): Promise<void> {
+        try {
+            // Extract data from payload
+            const { messageId, content, threadId, from, to } = payload;
+            
+            if (!messageId || !content) {
+                throw new Error('Message ID and content are required');
+            }
+            
+            // Load messages from storage
+            await this._loadMessages();
+            
+            // Find the parent message
+            const parentMessage = this._messages.find(m => m.id === messageId);
+            if (!parentMessage) {
+                throw new Error(`Message with ID ${messageId} not found`);
+            }
+            
+            // Determine thread ID - either from payload, parent message, or create new
+            let replyThreadId = threadId || parentMessage.threadId;
+            
+            // If no thread exists yet, create one
+            if (!replyThreadId) {
+                replyThreadId = `thread-${Date.now()}`;
+                
+                // Update parent message with thread ID
+                parentMessage.threadId = replyThreadId;
+                
+                // Save the updated parent message
+                const parentIndex = this._messages.findIndex(m => m.id === messageId);
+                if (parentIndex >= 0) {
+                    this._messages[parentIndex] = parentMessage;
+                }
+            }
+            
+            // Create reply message
+            const replyId = `msg-${Date.now()}`;
+            const replyMessage = {
+                id: replyId,
+                sender: from || 'current-user',
+                content,
+                timestamp: new Date().toISOString(),
+                type: from === 'current-user' ? 'user' : 'agent',
+                targetAgent: to || parentMessage.sender,
+                threadId: replyThreadId,
+                parentId: messageId
+            };
+            
+            // Add to messages
+            this._messages.push(replyMessage);
+            
+            // Save updated messages
+            await this._saveMessages();
+            
+            // Check if we need to send the message via CrewAI
+            if (to && to !== 'current-user') {
+                // Create a loading message for the agent response
+                const loadingMessageId = `msg-${Date.now() + 1}`;
+                
+                // Add loading message to the UI
+                this.postMessage({
+                    type: 'AGENT_MESSAGE',
+                    payload: {
+                        id: loadingMessageId,
+                        sender: to,
+                        content: '...',
+                        timestamp: new Date().toISOString(),
+                        type: 'agent',
+                        status: 'loading',
+                        threadId: replyThreadId,
+                        parentId: replyId
+                    }
+                });
+                
+                // Send message to agent in the background
+                this._handleAgentMessage({
+                    content,
+                    targetAgent: to,
+                    loadingMessageId,
+                    threadId: replyThreadId,
+                    parentId: replyId
+                }).catch(error => {
+                    traceError('Error sending reply to agent:', error);
+                });
+            }
+            
+            // Notify the webview about the new reply
+            this.postMessage({
+                type: 'MESSAGE_ADDED',
+                payload: {
+                    message: replyMessage
+                }
+            });
+            
+            // If viewing thread, update the thread view
+            this.postMessage({
+                type: 'THREAD_UPDATED',
+                payload: {
+                    threadId: replyThreadId,
+                    message: replyMessage
+                }
+            });
+            
+        } catch (error) {
+            traceError('Error replying to message:', error);
+            vscode.window.showErrorMessage(`Failed to send reply: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    
+    /**
+     * Handles downloading a file attachment
+     */
+    private async _handleDownloadFile(payload: { url: string; name: string }): Promise<void> {
+        try {
+            // Extract url and name from payload
+            const { url, name } = payload;
+            
+            if (!url || !name) {
+                throw new Error('URL and name are required');
+            }
+            
+            // Show save dialog to get the save location
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(name),
+                filters: {
+                    'All Files': ['*']
+                }
+            });
+            
+            if (!saveUri) {
+                // User cancelled
+                return;
+            }
+            
+            // In a real implementation, we would download the file from the URL
+            // For now, just create a sample file
+            let fileContent = '';
+            
+            // Check if this is a code file
+            if (url.startsWith('code:')) {
+                // Extract code content from URL (in real impl, would be downloaded or retrieved from storage)
+                fileContent = url.replace('code:', '');
+            } else {
+                // Create a placeholder file
+                fileContent = `This is a placeholder file for ${name}\nIn a real implementation, this would be downloaded from ${url}`;
+            }
+            
+            // Write the file
+            await fs.writeFile(saveUri.fsPath, fileContent);
+            
+            // Show success message
+            vscode.window.showInformationMessage(`File saved to ${saveUri.fsPath}`);
+            
+        } catch (error) {
+            traceError('Error downloading file:', error);
+            vscode.window.showErrorMessage(`Failed to download file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    
+    // Internal messages array to store conversation - add this to the class
+    private _messages: any[] = [];
 
     /**
      * Handles agent messages
@@ -1656,12 +2309,29 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                 return;
             }
             
+            // Check if this project has been migrated to a different path
             const tribeFolderPath = path.join(this._projectPath, TRIBE_FOLDER);
             const projectFilePath = path.join(tribeFolderPath, 'project.json');
             
+            // Check if this is a migrated project that points to a parent project
             if (await fs.pathExists(projectFilePath)) {
                 const projectData = await fs.readJson(projectFilePath);
-                this._initialized = projectData.initialized || false;
+                
+                // If this project has been migrated, update the project path and reload
+                if (projectData.migrated && projectData.migratedTo) {
+                    traceInfo(`This project has been migrated to: ${projectData.migratedTo}`);
+                    
+                    // Update the project path to use the migrated location
+                    if (projectData.migratedTo !== this._projectPath) {
+                        this._projectPath = projectData.migratedTo;
+                        
+                        // Recursively reload state with the new path
+                        return this._loadState();
+                    }
+                }
+                
+                // Regular loading process
+                this._initialized = projectData.initialized || projectData.userInitialized || false;
                 this._projectVision = projectData.vision || '';
                 this._currentPhase = projectData.currentPhase || 'Planning';
             }
@@ -1685,6 +2355,9 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
             if (await fs.pathExists(decisionsFilePath)) {
                 this._pendingDecisions = await fs.readJson(decisionsFilePath);
             }
+            
+            // Also load messages
+            await this._loadMessages();
             
         } catch (error) {
             traceError('Failed to load state:', error);
@@ -1728,8 +2401,54 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
             const decisionsFilePath = path.join(tribeFolderPath, 'decisions.json');
             await fs.writeJson(decisionsFilePath, this._pendingDecisions, { spaces: 2 });
             
+            // Also save messages
+            await this._saveMessages();
+            
         } catch (error) {
             traceError('Failed to save state:', error);
+        }
+    }
+    
+    /**
+     * Loads messages from storage
+     */
+    private async _loadMessages(): Promise<void> {
+        try {
+            if (!this._projectPath) {
+                return;
+            }
+            
+            const messagesPath = path.join(this._projectPath, TRIBE_FOLDER, 'messages.json');
+            
+            if (await fs.pathExists(messagesPath)) {
+                this._messages = await fs.readJson(messagesPath);
+            } else {
+                // Initialize with empty array if file doesn't exist
+                this._messages = [];
+            }
+        } catch (error) {
+            traceError('Failed to load messages:', error);
+            // Initialize with empty array on error
+            this._messages = [];
+        }
+    }
+    
+    /**
+     * Saves messages to storage
+     */
+    private async _saveMessages(): Promise<void> {
+        try {
+            if (!this._projectPath) {
+                return;
+            }
+            
+            const tribeFolderPath = path.join(this._projectPath, TRIBE_FOLDER);
+            await fs.ensureDir(tribeFolderPath);
+            
+            const messagesPath = path.join(tribeFolderPath, 'messages.json');
+            await fs.writeJson(messagesPath, this._messages, { spaces: 2 });
+        } catch (error) {
+            traceError('Failed to save messages:', error);
         }
     }
 
@@ -1751,7 +2470,8 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                 activeAgents: this._activeAgents,
                 tasks: this._tasks,
                 pendingDecisions: this._pendingDecisions,
-                notifications: this._notifications
+                notifications: this._notifications,
+                messages: this._messages
             }
         });
     }

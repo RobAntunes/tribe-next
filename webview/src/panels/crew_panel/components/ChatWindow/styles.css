@@ -470,6 +470,75 @@
     padding: var(--space-3);
     overflow-x: auto;
     margin: var(--space-2) 0;
+    position: relative;
+}
+
+.markdown-content pre:hover .code-actions {
+    opacity: 1;
+}
+
+.code-actions {
+    position: absolute;
+    top: var(--space-1);
+    right: var(--space-1);
+    display: flex;
+    gap: var(--space-1);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.code-action-button {
+    background-color: color-mix(in srgb, var(--vscode-editor-background) 70%, var(--tribe-primary) 30%);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: var(--font-size-xs);
+    transition: all 0.2s ease;
+}
+
+.code-action-button:hover {
+    background-color: var(--tribe-primary);
+    transform: translateY(-1px);
+}
+
+.code-action-button.copy::before {
+    content: "Copy";
+    position: absolute;
+    top: -25px;
+    right: 0;
+    background-color: var(--vscode-editor-background);
+    color: var(--vscode-foreground);
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.code-action-button.apply::before {
+    content: "Apply to Editor";
+    position: absolute;
+    top: -25px;
+    right: 0;
+    background-color: var(--vscode-editor-background);
+    color: var(--vscode-foreground);
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+}
+
+.code-action-button:hover::before {
+    opacity: 1;
 }
 
 .markdown-content code {

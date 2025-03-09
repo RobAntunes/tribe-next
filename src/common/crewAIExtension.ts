@@ -17,7 +17,14 @@ export class CrewAIExtension {
     private _pythonPath: string[] | undefined;
     
     constructor(private readonly _context: vscode.ExtensionContext) {
-        // Initialize
+        // Initialize the project path from the workspace root if available
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+            this._projectPath = workspaceFolders[0].uri.fsPath;
+            traceInfo(`Initialized CrewAIExtension with project path: ${this._projectPath}`);
+        } else {
+            traceInfo('CrewAIExtension initialized without a project path');
+        }
     }
     
     /**
@@ -25,6 +32,9 @@ export class CrewAIExtension {
      */
     public async startServer(projectPath: string): Promise<boolean> {
         try {
+            // Initialize project folder structure if it doesn't exist
+            await this._ensureProjectStructure(projectPath);
+            
             // First check if a server is already running for this project
             const isRunning = await this._isServerRunning();
             if (isRunning) {
@@ -221,8 +231,12 @@ export class CrewAIExtension {
      */
     private async _getServerPort(): Promise<number> {
         try {
+            // Default port to use in case of any issues
+            const DEFAULT_PORT = 9876;
+            
             if (!this._projectPath) {
-                throw new Error('Project path not set');
+                traceError('Project path not set, using default port');
+                return DEFAULT_PORT;
             }
             
             // Check if there's a port file
@@ -233,13 +247,24 @@ export class CrewAIExtension {
                 if (!isNaN(port)) {
                     return port;
                 }
+            } else {
+                // If port file doesn't exist, create it with the default port
+                try {
+                    // Ensure the .tribe folder exists
+                    await fs.ensureDir(path.join(this._projectPath, TRIBE_FOLDER));
+                    // Write the default port to the file
+                    await fs.writeFile(portFilePath, DEFAULT_PORT.toString(), 'utf8');
+                    traceInfo(`Created server port file with default port ${DEFAULT_PORT}`);
+                } catch (writeError) {
+                    traceError('Error creating server port file:', writeError);
+                }
             }
             
-            // Default port if no port file
-            return 9876;
+            // Default port if no port file or invalid port
+            return DEFAULT_PORT;
         } catch (error) {
             traceError('Error getting server port:', error);
-            return 9876; // Default port
+            return 9876; // Default port as fallback
         }
     }
     
@@ -380,6 +405,179 @@ export class CrewAIExtension {
     }
     
     // No simulated behavior - we either connect to the real server or fail gracefully
+    
+    /**
+     * Ensures the project structure is set up correctly for the CrewAI server
+     * Creates the .tribe folder and necessary files if they don't exist
+     * Avoids creating duplicate structures in subfolders
+     * Handles migration of .tribe folders from subfolders to parent folders
+     */
+    private async _ensureProjectStructure(projectPath: string): Promise<void> {
+        try {
+            // Import the findAllProjectPaths function
+            const { findAllProjectPaths } = await import('./utilities');
+            
+            // Find all project paths in the hierarchy
+            const projectPaths = await findAllProjectPaths(projectPath);
+            
+            // Handle project hierarchy with potential migration
+            let actualProjectPath = projectPath;
+            let shouldMigrate = false;
+            let sourceFolder: string | undefined;
+            
+            // Case 1: We have a .tribe in both current folder and a parent folder
+            if (projectPaths.current && projectPaths.parent) {
+                traceInfo(`Found .tribe folders in both current (${projectPaths.current}) and parent (${projectPaths.parent}) directories`);
+                
+                // If both exist, we should consolidate them, preferring the parent
+                actualProjectPath = projectPaths.parent;
+                sourceFolder = projectPaths.current;
+                shouldMigrate = true;
+                
+                this._projectPath = projectPaths.parent;
+            } 
+            // Case 2: We only have a .tribe in parent directory
+            else if (projectPaths.parent) {
+                traceInfo(`Found existing project structure in parent directory: ${projectPaths.parent}`);
+                actualProjectPath = projectPaths.parent;
+                this._projectPath = projectPaths.parent;
+            }
+            // Case 3: We only have a .tribe in current directory
+            else if (projectPaths.current) {
+                actualProjectPath = projectPaths.current;
+            }
+            
+            // Create .tribe folder
+            const tribeFolderPath = path.join(actualProjectPath, TRIBE_FOLDER);
+            await fs.ensureDir(tribeFolderPath);
+            
+            // Handle migration from subfolder if needed
+            if (shouldMigrate && sourceFolder) {
+                try {
+                    const sourceTribePath = path.join(sourceFolder, TRIBE_FOLDER);
+                    
+                    // Only attempt migration if both folders exist
+                    if (await fs.pathExists(sourceTribePath) && await fs.pathExists(tribeFolderPath)) {
+                        traceInfo(`Migrating project data from ${sourceTribePath} to ${tribeFolderPath}`);
+                        
+                        // Merge project.json if both exist
+                        const sourceProjectPath = path.join(sourceTribePath, 'project.json');
+                        const targetProjectPath = path.join(tribeFolderPath, 'project.json');
+                        
+                        if (await fs.pathExists(sourceProjectPath)) {
+                            try {
+                                // Read source project data
+                                const sourceData = await fs.readJson(sourceProjectPath);
+                                
+                                // Read target project data if exists
+                                let targetData = {};
+                                if (await fs.pathExists(targetProjectPath)) {
+                                    targetData = await fs.readJson(targetProjectPath);
+                                }
+                                
+                                // Merge project data, prioritizing existing target data
+                                // But preserving important fields from the source
+                                const mergedData = {
+                                    ...targetData,
+                                    // Only update vision if not already set in target
+                                    vision: (targetData as any).vision || sourceData.vision,
+                                    // Preserve subfolder project.json as subproject data
+                                    subprojects: {
+                                        ...(targetData as any).subprojects || {},
+                                        [path.basename(sourceFolder)]: {
+                                            path: sourceFolder,
+                                            originalData: sourceData
+                                        }
+                                    },
+                                    // Update last modified
+                                    lastModified: new Date().toISOString()
+                                };
+                                
+                                // Write merged data
+                                await fs.writeJson(targetProjectPath, mergedData, { spaces: 2 });
+                                traceInfo('Successfully merged project data');
+                                
+                                // Mark the source project.json as migrated
+                                await fs.writeJson(sourceProjectPath, {
+                                    ...sourceData,
+                                    migrated: true,
+                                    migratedTo: actualProjectPath,
+                                    lastModified: new Date().toISOString()
+                                }, { spaces: 2 });
+                            } catch (mergeError) {
+                                traceError('Error merging project data:', mergeError);
+                                // Continue anyway to create default structure
+                            }
+                        }
+                    }
+                } catch (migrationError) {
+                    traceError('Error during migration:', migrationError);
+                    // Continue anyway to create default structure
+                }
+            }
+            
+            // Create necessary subfolders
+            const subfolders = [
+                'agents',     // Store agent metadata and state
+                'tasks',      // Store task definitions and status
+                'teams',      // Store team compositions and crew definitions
+                'memory',     // Store agent memories and learning
+                'context',    // Store project context and knowledge
+                'logs',       // Store operation logs
+                'cache'       // Store temporary files and cache
+            ];
+            
+            // Create all subfolders
+            for (const subfolder of subfolders) {
+                await fs.ensureDir(path.join(tribeFolderPath, subfolder));
+            }
+            
+            // Check if project.json exists, create if not
+            const projectJsonPath = path.join(tribeFolderPath, 'project.json');
+            if (!(await fs.pathExists(projectJsonPath))) {
+                const projectData = {
+                    name: path.basename(projectPath),
+                    description: 'MightyDev Project',
+                    createdAt: new Date().toISOString(),
+                    lastModified: new Date().toISOString(),
+                    state: 'structure_initialized',
+                    initialized: false, // Important: This is false to show the initialization screen
+                    userInitialized: false // Flag to track if user has gone through setup
+                };
+                
+                await fs.writeJson(projectJsonPath, projectData, { spaces: 2 });
+                traceInfo(`Created project.json at ${projectJsonPath}`);
+            }
+            
+            // Create default index files for important folders
+            const defaultFiles = [
+                { path: 'agents/index.json', content: { agents: [] } },
+                { path: 'tasks/index.json', content: { tasks: [] } },
+                { path: 'teams/index.json', content: { teams: [] } },
+                { path: 'memory/index.json', content: { memories: [] } }
+            ];
+            
+            for (const file of defaultFiles) {
+                const filePath = path.join(tribeFolderPath, file.path);
+                if (!(await fs.pathExists(filePath))) {
+                    await fs.writeJson(filePath, file.content, { spaces: 2 });
+                    traceInfo(`Created ${file.path}`);
+                }
+            }
+            
+            // Create server_port.txt with default port if it doesn't exist
+            const portFilePath = path.join(tribeFolderPath, 'server_port.txt');
+            if (!(await fs.pathExists(portFilePath))) {
+                await fs.writeFile(portFilePath, '9876', 'utf8');
+                traceInfo(`Created server_port.txt at ${portFilePath}`);
+            }
+            
+            traceInfo(`Project structure initialized at ${tribeFolderPath}`);
+        } catch (error) {
+            traceError('Error ensuring project structure:', error);
+            // Continue anyway, as we might be able to use the server without the structure
+        }
+    }
     
     /**
      * Dispose method to clean up resources

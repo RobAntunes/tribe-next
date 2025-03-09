@@ -26,12 +26,14 @@ import { createOutputChannel, onDidChangeConfiguration, registerCommand } from '
 import { CrewPanelProvider } from './common/crewPanelProvider';
 import { CrewAIExtension } from './common/crewAIExtension';
 import { LearningSystem } from './common/learningSystem';
+import { ServerManager } from './common/serverManager';
 // Make sure to import the tool classes from the correct path
 import { 
     FileSystemTool, 
     CodeAnalysisTool, 
     StructuredOutputTool, 
     MetadataTool,
+    MessagingTool,
     Tool
 } from './common/tools';
 import { 
@@ -47,6 +49,7 @@ import {
 let lsClient: LanguageClient | undefined;
 let crewPanelProvider: CrewPanelProvider | undefined;
 let crewAIExtension: CrewAIExtension | undefined;
+let serverManager: ServerManager | undefined;
 let learningSystem: LearningSystem | undefined;
 let agentTools: Map<string, any> = new Map();
 
@@ -145,13 +148,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             // Continue without crew panel provider
         }
         
-        // Create the CrewAI extension
+        // Create the CrewAI extension and server manager
         try {
             crewAIExtension = new CrewAIExtension(context);
             traceInfo('CrewAIExtension initialized');
+            
+            // Create server manager
+            serverManager = new ServerManager(context);
+            traceInfo('ServerManager initialized');
         } catch (error) {
-            traceError('Error creating CrewAIExtension:', error);
-            // Continue without CrewAI extension
+            traceError('Error creating CrewAIExtension or ServerManager:', error);
+            // Continue without CrewAI extension or server manager
         }
         
         // Create the Learning System
@@ -159,6 +166,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             if (workspaceRoot) {
                 learningSystem = new LearningSystem(workspaceRoot);
                 traceInfo('LearningSystem initialized');
+                
+                // Add messaging tool
+                if (workspaceRoot && crewAIExtension) {
+                    const messagingTool = new MessagingTool(workspaceRoot, 'system', crewAIExtension);
+                    agentTools.set(messagingTool.name, messagingTool);
+                    traceInfo(`Registered tool: ${messagingTool.name}`);
+                    
+                    // Load message history from storage
+                    await messagingTool.loadFromStorage();
+                }
             } else {
                 traceInfo('No workspace root found. LearningSystem will be initialized when a workspace is opened.');
             }
@@ -226,9 +243,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                     }
                     
                     // Start the CrewAI server if we have a workspace
-                    if (crewAIExtension && workspaceRoot) {
+                    if (serverManager && workspaceRoot) {
                         try {
-                            const serverStarted = await crewAIExtension.startServer(workspaceRoot);
+                            const serverStarted = await serverManager.startServer(workspaceRoot);
                             if (!serverStarted) {
                                 traceError('Failed to start CrewAI server');
                                 vscode.window.showErrorMessage('Failed to start CrewAI server. Please check the logs for details.');
@@ -520,10 +537,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                             vscode.commands.executeCommand(COMMAND_INITIALIZE_PROJECT);
                         }
                     });
-                } else if (crewAIExtension) {
+                } else if (serverManager) {
                     // If the project is already initialized, start the CrewAI server
                     try {
-                        const serverStarted = await crewAIExtension.startServer(workspaceRoot);
+                        const serverStarted = await serverManager.startServer(workspaceRoot);
                         if (!serverStarted) {
                             traceError('Failed to start CrewAI server for initialized project');
                             vscode.window.showErrorMessage('Failed to start CrewAI server. Please check the logs for details.');
@@ -541,18 +558,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         traceError('Error handling getting started info:', error);
     }
     
-    // Set up communication between crewPanelProvider and crewAIExtension
+    // Set up communication between crewPanelProvider and server manager
     try {
-        if (crewPanelProvider && crewAIExtension) {
+        if (crewPanelProvider && serverManager) {
             // Register a command to start the CrewAI server
             context.subscriptions.push(
                 vscode.commands.registerCommand('mightydev.startCrewAIServer', async (projectPath: string) => {
                     try {
-                        if (!crewAIExtension) {
-                            throw new Error('CrewAI extension not initialized');
+                        if (!serverManager) {
+                            throw new Error('Server manager not initialized');
                         }
                         
-                        const serverStarted = await crewAIExtension.startServer(projectPath);
+                        const serverStarted = await serverManager.startServer(projectPath);
                         if (!serverStarted) {
                             throw new Error('Failed to start CrewAI server');
                         }

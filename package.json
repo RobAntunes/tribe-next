@@ -196,6 +196,7 @@
         "@vscode/python-extension": "^1.0.5",
         "adm-zip": "^0.5.16",
         "crewai": "^1.0.0",
+        "diff": "^7.0.0",
         "fs-extra": "^11.3.0",
         "tar": "^6.2.1",
         "tmp": "^0.2.3",
@@ -203,6 +204,7 @@
         "vscode-languageclient": "^8.1.0"
     },
     "devDependencies": {
+        "@types/diff": "^7.0.1",
         "@types/fs-extra": "^11.0.4",
         "@types/glob": "^8.1.0",
         "@types/node": "16.x",

@@ -1077,7 +1077,7 @@ export const ProjectManagementSystem: React.FC<ProjectManagementSystemProps> = (
                                 {task.executionMode && (
                                   <span className={`task-mode mode-${task.executionMode}`}>{task.executionMode.charAt(0)}</span>
                                 )}
-                                {task.dependencies && Array.isArray(task.dependencies) && task.dependencies.length > 0 && (
+                                {task.dependencies?.length > 0 && (
                                   <span className="task-deps">D{task.dependencies.length}</span>
                                 )}
                               </div>
@@ -1121,7 +1121,7 @@ export const ProjectManagementSystem: React.FC<ProjectManagementSystemProps> = (
                                 {task.executionMode && (
                                   <span className={`task-mode mode-${task.executionMode}`}>{task.executionMode.charAt(0)}</span>
                                 )}
-                                {task.dependencies && Array.isArray(task.dependencies) && task.dependencies.length > 0 && (
+                                {task.dependencies?.length > 0 && (
                                   <span className="task-deps">D{task.dependencies.length}</span>
                                 )}
                               </div>
@@ -1165,7 +1165,7 @@ export const ProjectManagementSystem: React.FC<ProjectManagementSystemProps> = (
                                 {task.executionMode && (
                                   <span className={`task-mode mode-${task.executionMode}`}>{task.executionMode.charAt(0)}</span>
                                 )}
-                                {task.dependencies && Array.isArray(task.dependencies) && task.dependencies.length > 0 && (
+                                {task.dependencies?.length > 0 && (
                                   <span className="task-deps">D{task.dependencies.length}</span>
                                 )}
                               </div>
@@ -1209,7 +1209,7 @@ export const ProjectManagementSystem: React.FC<ProjectManagementSystemProps> = (
                                 {task.executionMode && (
                                   <span className={`task-mode mode-${task.executionMode}`}>{task.executionMode.charAt(0)}</span>
                                 )}
-                                {task.dependencies && Array.isArray(task.dependencies) && task.dependencies.length > 0 && (
+                                {task.dependencies?.length > 0 && (
                                   <span className="task-deps">D{task.dependencies.length}</span>
                                 )}
                               </div>
@@ -1253,7 +1253,7 @@ export const ProjectManagementSystem: React.FC<ProjectManagementSystemProps> = (
                                 {task.executionMode && (
                                   <span className={`task-mode mode-${task.executionMode}`}>{task.executionMode.charAt(0)}</span>
                                 )}
-                                {task.dependencies && Array.isArray(task.dependencies) && task.dependencies.length > 0 && (
+                                {task.dependencies?.length > 0 && (
                                   <span className="task-deps">D{task.dependencies.length}</span>
                                 )}
                               </div>

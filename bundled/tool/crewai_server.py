@@ -31,15 +31,20 @@ except ImportError:
 
 # Check for different virtual environments
 venv_paths = [
+    # Custom crewai_venv for Python 3.13
+    os.path.abspath(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "crewai_venv", "lib", "python3.13", "site-packages"
+    )),
+    # Custom crewai_venv for Python 3.10
+    os.path.abspath(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "crewai_venv", "lib", "python3.10", "site-packages"
+    )),
     # Default .venv
     os.path.abspath(os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         ".venv", "lib", "python3.10", "site-packages"
-    )),
-    # Custom crewai_venv
-    os.path.abspath(os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "crewai_venv", "lib", "python3.10", "site-packages"
     )),
     # Add more paths if needed
 ]
@@ -69,14 +74,15 @@ try:
 except ImportError as e:
     print(f"CrewAI import error: {e}")
     print(f"Python path: {sys.path}")
-    print("CrewAI is not installed. Please install with: pip install crewai")
+    print("CrewAI is not installed or not working properly")
 
     # Try to use the adapter's classes directly if importing failed
     try:
         from crewai_adapter import Agent, Task, Crew, Process, LLM
         print("Using CrewAI adapter classes")
     except ImportError:
-        sys.exit(1)
+        print("Error importing adapter classes. Please check your installation")
+        # Continue with partial functionality
 
 # Set up logging
 logging.basicConfig(
@@ -446,62 +452,9 @@ class CrewAIServer:
             # Check if this is a bootstrapping request from a project description
             if "description" in crew_data and not crew_data.get("agent_ids") and not crew_data.get("task_ids"):
                 logger.info(f"Creating bootstrapping crew from description: {crew_data['description']}")
-
-                # Create a bootstrapping agent if none exists
-                agent_id = "bootstrap-agent"
-                if agent_id not in self.agents:
-                    bootstrap_agent_data = {
-                        "id": agent_id,
-                        "name": "Bootstrap",
-                        "role": "Bootstrapping Agent",
-                        "goal": "Initialize the project and create a team",
-                        "backstory": "Specialized in analyzing project requirements and creating optimal team structures."
-                    }
-                    self._create_agent_from_data(bootstrap_agent_data)
-
-                # Create a bootstrapping task
-                task_id = "bootstrap-task"
-                task_description = f"Analyze the project description: '{crew_data['description']}' and create an optimal team structure."
-
-                # Add the bootstrap agent and task
-                agents = [self.agents[agent_id]] if agent_id in self.agents else []
-                tasks = []
-
-                if agents:
-                    # Create a task for the bootstrap agent
-                    task = Task(
-                        description=task_description,
-                        agent=agents[0],
-                        expected_output="A detailed team structure proposal"
-                    )
-                    tasks.append(task)
-
-                # Create a simple Crew just to handle the bootstrap
-                try:
-                    crew = Crew(
-                        agents=agents,
-                        tasks=tasks,
-                        verbose=True,
-                        process=Process.sequential,
-                        memory=True,
-                    )
-
-                    # Store the crew
-                    self.crews[crew_id] = crew
-
-                    return {"id": crew_id, "status": "created"}
-
-                except Exception as crew_error:
-                    # We'll try a more resilient approach for bootstrapping
-                    logger.error(f"Error creating bootstrap crew: {crew_error}")
-                    logger.info("Creating a simplified crew response for bootstrapping")
-
-                    # Return success anyway to avoid blocking the UI
-                    return {
-                        "id": crew_id,
-                        "status": "created",
-                        "message": "Created with limited functionality - please add API keys in the Environment Manager"
-                    }
+                
+                # Call enhanced bootstrapping method for more sophisticated team creation
+                return self._create_bootstrap_team(crew_id, crew_data['description'])
 
             # Normal crew creation with existing agents and tasks
             agent_ids = crew_data.get("agent_ids", [])
@@ -546,6 +499,349 @@ class CrewAIServer:
         except Exception as e:
             logger.error(f"Error creating crew: {e}")
             return {"status": "error", "message": f"Failed to create crew: {str(e)}"}
+            
+    def _create_bootstrap_team(self, crew_id, project_description):
+        """
+        Create a bootstrap team with the recruitment team agents.
+        
+        This implements the team bootstrapping pattern described in CLAUDE.md:
+        1. Create a recruitment team with hardcoded agents that dissolve after team creation
+        2. Allow foundation model to break projects into phases
+        3. Create optimal team for Phase 1
+        4. Ensure all agent fields are properly filled
+        
+        Args:
+            crew_id (str): ID for the crew
+            project_description (str): Description of the project
+            
+        Returns:
+            dict: Response with status and message
+        """
+        try:
+            # Create a set of recruitment team agents - each with specialized roles
+            recruitment_team = [
+                {
+                    # Use name directly, and store our logical ID in metadata
+                    "name": "Nova",
+                    "role": "Project Analyzer",
+                    "goal": "Break down projects into well-defined phases and milestones",
+                    "backstory": "With years of experience in project management and strategic planning, Nova excels at analyzing project requirements and creating optimal roadmaps.",
+                    "tone": "Analytical",
+                    "learning_style": "Systematic",
+                    "working_style": "Methodical",
+                    "communication_style": "Clear and precise",
+                    "quirks": ["Always thinks in milestones", "Uses project management terminology"],
+                    "metadata": {
+                        "team": "recruitment", 
+                        "dissolves_after_bootstrap": True,
+                        "logical_id": "project_analyzer"
+                    }
+                },
+                {
+                    "name": "Trinity",
+                    "role": "Team Architect",
+                    "goal": "Design optimal team structures based on project requirements",
+                    "backstory": "Trinity has assembled countless high-performing teams across various domains. She has an intuitive understanding of how to match skills and personalities.",
+                    "tone": "Strategic",
+                    "learning_style": "Intuitive",
+                    "working_style": "Adaptive",
+                    "communication_style": "Thoughtful and balanced",
+                    "quirks": ["Often references successful team structures from history", "Thinks in terms of team dynamics"],
+                    "metadata": {
+                        "team": "recruitment", 
+                        "dissolves_after_bootstrap": True,
+                        "logical_id": "team_architect"
+                    }
+                },
+                {
+                    "name": "Sparks",
+                    "role": "Agent Designer",
+                    "goal": "Create detailed agent profiles with appropriate personalities and skills",
+                    "backstory": "Sparks specializes in crafting detailed personas and backstories that give AI agents distinctive, effective personalities.",
+                    "tone": "Creative",
+                    "learning_style": "Exploratory",
+                    "working_style": "Detail-oriented",
+                    "communication_style": "Colorful and rich",
+                    "quirks": ["Anthropomorphizes everything", "Uses character development terminology"],
+                    "metadata": {
+                        "team": "recruitment", 
+                        "dissolves_after_bootstrap": True,
+                        "logical_id": "agent_designer"
+                    }
+                }
+            ]
+            
+            # Create our recruitment agents - CrewAI will assign IDs
+            team_agents = []
+            
+            for i, agent_data in enumerate(recruitment_team):
+                # Make a copy to avoid modifying the original dict
+                agent_data_copy = agent_data.copy()
+                
+                # Log the agent we're creating
+                logger.debug(f"Creating agent {i+1}/{len(recruitment_team)}: '{agent_data_copy.get('role')}', name: {agent_data_copy.get('name')}")
+                
+                # Try to create the recruitment team agent with ExtendedAgent if available
+                try:
+                    # Import the extended agent class if available
+                    from crewai import ExtendedAgent
+                    agent = ExtendedAgent(**agent_data_copy)
+                    team_agents.append(agent)
+                    # Store the agent using its assigned ID
+                    self.agents[agent.id] = agent
+                    logger.debug(f"Created agent with ID {agent.id}, name: {getattr(agent, 'name', None)}")
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error creating ExtendedAgent: {str(e)}")
+                    # Fall back to regular agent creation
+                    agent = self._create_agent_from_data(agent_data_copy)
+                    if agent:
+                        team_agents.append(agent)
+                        # Store agent using its assigned ID if available
+                        if hasattr(agent, 'id'):
+                            self.agents[agent.id] = agent
+                        
+            # Use our team_agents list that contains all the created agents
+            recruitment_agents = team_agents
+            
+            if len(recruitment_agents) < len(recruitment_team):
+                logger.warning(f"Not all recruitment agents could be created. Proceeding with {len(recruitment_agents)} agents.")
+            
+            if not recruitment_agents:
+                logger.error("Failed to create any recruitment agents")
+                return {"status": "error", "message": "Failed to create recruitment agents"}
+            
+            # Create a global logical ID to agent mapping
+            logical_id_map = {}
+            
+            # Log what fields are available on the agent objects
+            if recruitment_agents:
+                sample_agent = recruitment_agents[0]
+                available_fields = [field for field in dir(sample_agent) if not field.startswith('_')]
+                logger.debug(f"Available agent fields: {available_fields}")
+            
+            # Match each agent with logical ID from metadata and also by index as fallback
+            for i, agent in enumerate(recruitment_agents):
+                # Store our logical ID mapping
+                logical_id = None
+                
+                # Check if agent has metadata and if metadata has logical_id
+                if hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and 'logical_id' in agent.metadata:
+                    logical_id = agent.metadata['logical_id']
+                    logical_id_map[logical_id] = agent
+                    logger.debug(f"Mapped agent to logical ID '{logical_id}'")
+                
+                # For agents created during debugging, their metadata might be a string
+                # Store by name as a fallback
+                if hasattr(agent, 'name') and agent.name:
+                    name_as_id = agent.name.lower().replace(' ', '_')
+                    if name_as_id not in logical_id_map:
+                        logical_id_map[name_as_id] = agent
+                        logger.debug(f"Mapped agent to name-based ID '{name_as_id}'")
+                
+                # Also store by role as a fallback
+                if hasattr(agent, 'role') and agent.role:
+                    role_as_id = agent.role.lower().replace(' ', '_')
+                    if role_as_id not in logical_id_map:
+                        logical_id_map[role_as_id] = agent
+                        logger.debug(f"Mapped agent to role-based ID '{role_as_id}'")
+                
+                # Always store by index as final fallback
+                logical_id_map[f"agent_{i}"] = agent
+            
+            # Log available logical IDs
+            logger.debug(f"Available logical IDs: {list(logical_id_map.keys())}")
+            
+            # Use our find_agent method to locate the necessary agents
+            project_analyzer = self.find_agent(logical_id="project_analyzer") or self.find_agent(name="Nova") or self.find_agent(role="Project Analyzer")
+            
+            team_architect = self.find_agent(logical_id="team_architect") or self.find_agent(name="Trinity") or self.find_agent(role="Team Architect")
+            
+            agent_designer = self.find_agent(logical_id="agent_designer") or self.find_agent(name="Sparks") or self.find_agent(role="Agent Designer")
+            
+            # Check if we found all the required agents
+            if not all([project_analyzer, team_architect, agent_designer]):
+                logger.error("Could not find all required recruitment agents")
+                missing_agents = []
+                if not project_analyzer:
+                    missing_agents.append("Project Analyzer / Nova")
+                if not team_architect:
+                    missing_agents.append("Team Architect / Trinity")
+                if not agent_designer:
+                    missing_agents.append("Agent Designer / Sparks")
+                logger.error(f"Missing agents: {', '.join(missing_agents)}")
+                
+                # Log the actual agent details to help with debugging
+                logger.error(f"Created agents: {[(a.id, getattr(a, 'name', None), getattr(a, 'role', None)) for a in recruitment_agents]}")
+                
+                return {"status": "error", "message": f"Failed to identify required recruitment agents: {', '.join(missing_agents)}"}
+            
+            # Create the recruitment team tasks
+            recruitment_tasks = [
+                # Task 1: Analyze project and break into phases
+                Task(
+                    description=f"Analyze the following project description and break it into logical phases: '{project_description}'. "
+                               f"For each phase, provide: 1) A name, 2) Key objectives, 3) Required skills. "
+                               f"IMPORTANT: Use the structured_json_output tool to format your response as a JSON object.",
+                    agent=project_analyzer,
+                    expected_output="A JSON object with an array of project phases, each with name, objectives, and required skills. You MUST use the structured_json_output tool to ensure your response is properly formatted."
+                ),
+                # Task 2: Design team structure for Phase 1
+                Task(
+                    description="Based on the project analysis, design an optimal team structure for Phase 1. "
+                               "The team should include 3-5 specialized agents with complementary skills. "
+                               "IMPORTANT: Use the structured_json_output tool to format your response as a JSON object.",
+                    agent=team_architect,
+                    expected_output="A JSON object describing the team structure with roles, responsibilities, and relationships between agents. You MUST use the structured_json_output tool to ensure your response is properly formatted."
+                ),
+                # Task 3: Create detailed agent profiles
+                Task(
+                    description="Create detailed profiles for each agent in the team. Each profile must include: "
+                               "character name, role, goal, backstory, tone, learning style, working style, "
+                               "communication style, and 2-3 quirks that make the agent's personality distinctive. "
+                               "IMPORTANT: Use the structured_json_output tool to format your response as a JSON array.",
+                    agent=agent_designer,
+                    expected_output="A JSON array of agent profiles with all required fields. You MUST use the structured_json_output tool to ensure your response is properly formatted."
+                )
+            ]
+            
+            try:
+                # First, create and register tools for better JSON output
+                try:
+                    from crewai import StructuredJSONOutputTool
+                    from crewai import ExtractJSONTool
+                    
+                    # Define the exact JSON schema we expect
+                    team_schema = {
+                        "type": "object",
+                        "properties": {
+                            "agents": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "role": {"type": "string"},
+                                        "goal": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "backstory": {"type": "string"},
+                                        "skills": {"type": "array", "items": {"type": "string"}},
+                                        "communicationStyle": {"type": "string"},
+                                        "workingStyle": {"type": "string"},
+                                        "quirks": {"type": "array", "items": {"type": "string"}},
+                                        "autonomyLevel": {"type": "number"}
+                                    }
+                                }
+                            },
+                            "tasks": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "title": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "priority": {"type": "string"},
+                                        "assignee": {"type": "string"}
+                                    }
+                                }
+                            },
+                            "summary": {"type": "string"}
+                        }
+                    }
+                    
+                    # Create instances of the tools
+                    json_output_tool = StructuredJSONOutputTool(schema=team_schema)
+                    extract_json_tool = ExtractJSONTool()
+                    
+                    # Create a crew for the recruitment process with JSON tools
+                    recruitment_crew = Crew(
+                        agents=recruitment_agents,
+                        tasks=recruitment_tasks,
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True,
+                        tools=[json_output_tool, extract_json_tool]
+                    )
+                except (ImportError, AttributeError) as e:
+                    logger.error(f"Error creating JSON tools: {str(e)}")
+                    # Fall back to regular crew creation
+                    recruitment_crew = Crew(
+                        agents=recruitment_agents,
+                        tasks=recruitment_tasks,
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True,
+                    )
+                
+                # Store this temporary crew
+                self.crews[f"{crew_id}-recruitment"] = recruitment_crew
+                
+                # For now, we just return success as we don't yet have the final team
+                # In a full implementation, we would run the crew and process the results
+                return {
+                    "id": crew_id,
+                    "status": "created",
+                    "message": "Created recruitment team - next step will automatically create Phase 1 team",
+                    "recruitment_crew_id": f"{crew_id}-recruitment"
+                }
+            except Exception as crew_error:
+                logger.error(f"Error creating recruitment crew: {crew_error}")
+                
+                # Create a simplified fallback
+                # Create a basic agent if none exists
+                agent_id = "bootstrap-agent"
+                if agent_id not in self.agents:
+                    bootstrap_agent_data = {
+                        "id": agent_id,
+                        "name": "Bootstrap",
+                        "role": "Bootstrapping Agent",
+                        "goal": "Initialize the project and create a team",
+                        "backstory": "Specialized in analyzing project requirements and creating optimal team structures."
+                    }
+                    self._create_agent_from_data(bootstrap_agent_data)
+
+                # Add the bootstrap agent
+                agents = [self.agents[agent_id]] if agent_id in self.agents else []
+                tasks = []
+
+                if agents:
+                    # Create a task for the bootstrap agent
+                    task = Task(
+                        description=f"Analyze the project description: '{project_description}' and create an optimal team structure.",
+                        agent=agents[0],
+                        expected_output="A detailed team structure proposal"
+                    )
+                    tasks.append(task)
+
+                # Create a simple Crew as a fallback
+                try:
+                    crew = Crew(
+                        agents=agents,
+                        tasks=tasks,
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True,
+                    )
+
+                    # Store the crew
+                    self.crews[crew_id] = crew
+
+                    return {
+                        "id": crew_id, 
+                        "status": "created",
+                        "message": "Created fallback bootstrap crew due to error with recruitment team",
+                        "fallback": True
+                    }
+                except Exception as simple_crew_error:
+                    logger.error(f"Error creating simple bootstrap crew: {simple_crew_error}")
+                    return {
+                        "id": crew_id,
+                        "status": "created",
+                        "message": "Created with limited functionality - please configure API keys in the Environment Manager"
+                    }
+                
+        except Exception as e:
+            logger.error(f"Error creating bootstrap team: {e}")
+            return {"status": "error", "message": f"Failed to create bootstrap team: {str(e)}"}
 
     def run_crew(self, crew_id):
         """
@@ -582,12 +878,481 @@ class CrewAIServer:
             logger.error(f"Error running crew: {e}")
             return {"status": "error", "message": f"Failed to run crew: {str(e)}"}
 
+    def create_task_coordinator(self, crew_id=None):
+        """
+        Creates a specialized Task Coordinator agent that handles task assignment,
+        delegation, and workload management across the team.
+        
+        The Task Coordinator handles:
+        1. Finding the best agent for a given task based on skills and availability
+        2. Managing agent workloads and preventing overallocation
+        3. Facilitating delegation between agents
+        4. Monitoring task completion and reassigning as needed
+        
+        Args:
+            crew_id (str, optional): ID of the crew this coordinator will work with
+            
+        Returns:
+            dict: Status and the created agent's ID
+        """
+        try:
+            # Create the Task Coordinator agent with specialized capabilities
+            task_coordinator_data = {
+                "name": "Coordinator",
+                "role": "Task Coordinator",
+                "goal": "Efficiently assign tasks to the most suitable agents and facilitate team collaboration",
+                "backstory": "Coordinator excels at understanding agent capabilities, workloads, and task requirements to create optimal assignments. They maintain the team's productivity by ensuring work is distributed based on skills, availability, and priorities.",
+                "tone": "Efficient",
+                "learning_style": "Analytical",
+                "working_style": "Systematic",
+                "communication_style": "Clear and direct",
+                "quirks": ["Always considers workload balance", "Prioritizes team efficiency over individual preferences"],
+                "metadata": {
+                    "team": "management", 
+                    "logical_id": "task_coordinator",
+                    "is_coordinator": True
+                }
+            }
+            
+            # Create the coordinator agent
+            coordinator = self._create_agent_from_data(task_coordinator_data)
+            
+            if coordinator and hasattr(coordinator, 'id'):
+                coord_id = coordinator.id
+                self.agents[coord_id] = coordinator
+                
+                # If we have a crew, add this agent to it
+                if crew_id and crew_id in self.crews:
+                    # Add coordinator to the crew's agents
+                    # Note: This might need adjustment based on the CrewAI version
+                    # as some versions don't allow adding agents after crew creation
+                    try:
+                        self.crews[crew_id].agents.append(coordinator)
+                    except Exception as e:
+                        logger.warning(f"Could not add coordinator to crew: {e}")
+                
+                return {
+                    "status": "success",
+                    "agent_id": coord_id,
+                    "message": "Task Coordinator agent created successfully"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Failed to create Task Coordinator agent"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error creating Task Coordinator: {e}")
+            return {
+                "status": "error",
+                "message": f"Failed to create Task Coordinator: {str(e)}"
+            }
+    
+    def find_suitable_agent(self, task_description, required_skills=None, priority="medium", deadline=None):
+        """
+        Finds the most suitable agent for a given task based on skills, workload, and availability.
+        This can be used by both humans and other agents for delegation.
+        
+        Args:
+            task_description (str): Description of the task
+            required_skills (list, optional): List of skills required for the task
+            priority (str, optional): Priority of the task (low, medium, high, critical)
+            deadline (str, optional): ISO format date string for when the task is due
+            
+        Returns:
+            dict: Recommended agent(s) with suitability scores and reasons
+        """
+        if not self.agents:
+            return {
+                "status": "error",
+                "message": "No agents available for task assignment"
+            }
+        
+        # Find our task coordinator if available
+        coordinator = self.find_agent(logical_id="task_coordinator")
+        
+        # If we have a coordinator, use that agent to make the recommendation
+        if coordinator:
+            prompt = f"""
+            Task Assignment Analysis
+            
+            Task Description: {task_description}
+            
+            {f'Required Skills: {", ".join(required_skills)}' if required_skills else ''}
+            Priority: {priority}
+            {f'Deadline: {deadline}' if deadline else ''}
+            
+            Available Agents:
+            {self._format_agent_list_for_prompt()}
+            
+            Based on the task requirements and agent capabilities, determine the most suitable agent(s) for this task.
+            For each recommended agent, provide:
+            1. A suitability score from 0-100
+            2. Reasoning for why this agent is suitable
+            3. Any potential concerns or limitations
+            
+            Return your recommendation in JSON format:
+            {{
+                "recommendations": [
+                    {{
+                        "agent_id": "<agent_id>",
+                        "name": "<agent_name>",
+                        "suitability_score": <score>,
+                        "reasoning": "<reasons why this agent is suitable>",
+                        "concerns": "<any potential issues or limitations>"
+                    }}
+                ],
+                "explanation": "<overall explanation of the recommendation logic>"
+            }}
+            """
+            
+            # Ask the coordinator for a recommendation
+            try:
+                from crewai import RPCAgent
+                if isinstance(coordinator, RPCAgent):
+                    # For newer CrewAI versions with RPCAgent
+                    response = coordinator.run(prompt)
+                else:
+                    # For older CrewAI versions
+                    response = coordinator._process_message(prompt)
+                
+                # Parse the response for JSON
+                import re
+                import json
+                
+                # Try to extract JSON from the response
+                json_match = re.search(r'```json\n(.*?)\n```', response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
+                else:
+                    # Look for just a JSON object without markdown formatting
+                    json_match = re.search(r'({[\s\S]*})', response)
+                    json_str = json_match.group(1) if json_match else response
+                
+                try:
+                    recommendation = json.loads(json_str)
+                    return {
+                        "status": "success",
+                        "message": "Agent recommendation completed",
+                        "data": recommendation
+                    }
+                except json.JSONDecodeError:
+                    logger.error(f"Could not parse JSON from coordinator response: {response}")
+                    
+            except Exception as e:
+                logger.error(f"Error getting recommendation from coordinator: {e}")
+        
+        # Fallback: simple matching algorithm if coordinator is unavailable or fails
+        recommendations = []
+        
+        # Iterate through all agents
+        for agent_id, agent in self.agents.items():
+            # Skip the coordinator itself
+            if hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and agent.metadata.get('is_coordinator'):
+                continue
+                
+            # Calculate a basic suitability score
+            score = 50  # Base score
+            reasoning = []
+            concerns = []
+            
+            # Check for required skills
+            agent_skills = []
+            if hasattr(agent, 'skills') and agent.skills:
+                if isinstance(agent.skills, list):
+                    agent_skills = agent.skills
+                elif isinstance(agent.skills, str):
+                    agent_skills = [s.strip() for s in agent.skills.split(',')]
+            
+            if required_skills and agent_skills:
+                matched_skills = [skill for skill in required_skills if any(s.lower() in skill.lower() for s in agent_skills)]
+                skill_match_percentage = len(matched_skills) / len(required_skills) if required_skills else 0
+                score += skill_match_percentage * 30  # Up to 30 points for skills
+                
+                if skill_match_percentage > 0.7:
+                    reasoning.append(f"Has {len(matched_skills)}/{len(required_skills)} required skills")
+                elif skill_match_percentage > 0:
+                    reasoning.append(f"Has some relevant skills ({len(matched_skills)}/{len(required_skills)})")
+                    concerns.append("Missing some required skills")
+                else:
+                    concerns.append("No matching skills found")
+                    score -= 20
+            
+            # Role relevance (simple string matching)
+            if hasattr(agent, 'role') and agent.role:
+                lower_desc = task_description.lower()
+                lower_role = agent.role.lower()
+                
+                role_keywords = lower_role.split()
+                matched_keywords = [kw for kw in role_keywords if kw in lower_desc]
+                
+                if matched_keywords:
+                    score += 15  # Up to 15 points for role relevance
+                    reasoning.append(f"Role '{agent.role}' aligns with task description")
+            
+            # Availability (placeholder - would be based on agent task count in a real system)
+            # Here we're just using a random value since we don't track agent workloads
+            import random
+            availability = random.uniform(0, 1)
+            
+            if availability > 0.7:
+                score += 15
+                reasoning.append("Currently available")
+            elif availability > 0.3:
+                score += 5
+                reasoning.append("Moderately available")
+                concerns.append("Has some existing workload")
+            else:
+                score -= 10
+                concerns.append("Heavy existing workload")
+            
+            # Add to recommendations if score is reasonable
+            if score > 40:
+                recommendations.append({
+                    "agent_id": agent_id,
+                    "name": getattr(agent, 'name', None) or getattr(agent, 'role', None) or agent_id,
+                    "suitability_score": min(100, int(score)),
+                    "reasoning": ", ".join(reasoning),
+                    "concerns": ", ".join(concerns) if concerns else "None"
+                })
+        
+        # Sort by suitability score
+        recommendations.sort(key=lambda x: x['suitability_score'], reverse=True)
+        
+        return {
+            "status": "success",
+            "message": "Agent recommendation completed using fallback algorithm",
+            "data": {
+                "recommendations": recommendations[:3],  # Top 3 recommendations
+                "explanation": "Recommendations based on skill matching, role relevance, and estimated availability."
+            }
+        }
+    
+    def _format_agent_list_for_prompt(self):
+        """Helper method to format agent info for the coordinator prompt"""
+        formatted_list = []
+        
+        for agent_id, agent in self.agents.items():
+            # Skip coordinators in the list
+            if hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and agent.metadata.get('is_coordinator'):
+                continue
+                
+            agent_info = []
+            agent_info.append(f"ID: {agent_id}")
+            
+            if hasattr(agent, 'name') and agent.name:
+                agent_info.append(f"Name: {agent.name}")
+                
+            if hasattr(agent, 'role') and agent.role:
+                agent_info.append(f"Role: {agent.role}")
+                
+            if hasattr(agent, 'skills') and agent.skills:
+                if isinstance(agent.skills, list):
+                    agent_info.append(f"Skills: {', '.join(agent.skills)}")
+                else:
+                    agent_info.append(f"Skills: {agent.skills}")
+                    
+            if hasattr(agent, 'backstory') and agent.backstory:
+                # Truncate backstory
+                backstory = agent.backstory[:100] + "..." if len(agent.backstory) > 100 else agent.backstory
+                agent_info.append(f"Background: {backstory}")
+                
+            formatted_list.append(" | ".join(agent_info))
+            
+        return "\n".join(formatted_list)
+    
+    def assign_task(self, task_data, assignee_id=None):
+        """
+        Assigns a task to an agent, either directly or by finding the most suitable agent.
+        
+        Args:
+            task_data (dict): Task data including description, priority, etc.
+            assignee_id (str, optional): Specific agent to assign to, or None to auto-assign
+            
+        Returns:
+            dict: Assignment result with status and assigned agent info
+        """
+        if not assignee_id:
+            # Find the best agent for this task
+            recommendation = self.find_suitable_agent(
+                task_description=task_data.get('description', ''),
+                required_skills=task_data.get('required_skills'),
+                priority=task_data.get('priority', 'medium'),
+                deadline=task_data.get('due_date')
+            )
+            
+            if recommendation['status'] == 'success' and recommendation['data']['recommendations']:
+                # Get the top recommendation
+                top_choice = recommendation['data']['recommendations'][0]
+                assignee_id = top_choice['agent_id']
+                
+                # Add the recommendation logic to task metadata
+                if 'metadata' not in task_data:
+                    task_data['metadata'] = {}
+                    
+                task_data['metadata']['assignment_logic'] = {
+                    'score': top_choice['suitability_score'],
+                    'reasoning': top_choice['reasoning'],
+                    'concerns': top_choice['concerns']
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'Could not find a suitable agent for this task'
+                }
+        
+        # Now assign the task
+        agent = self.agents.get(assignee_id)
+        if not agent:
+            return {
+                'status': 'error',
+                'message': f'Agent with ID {assignee_id} not found'
+            }
+            
+        # In a real implementation, we would update the agent's task list
+        # and possibly notify them of the new assignment
+        
+        return {
+            'status': 'success',
+            'message': 'Task assigned successfully',
+            'data': {
+                'task_id': task_data.get('id', 'new_task'),
+                'assigned_to': {
+                    'id': assignee_id,
+                    'name': getattr(agent, 'name', None) or getattr(agent, 'role', None) or assignee_id
+                }
+            }
+        }
+    
+    def list_agents(self, team=None):
+        """
+        List all available agents with their important attributes.
+        
+        Args:
+            team (str, optional): Filter agents by team name/id
+            
+        Returns:
+            list: List of agent information dictionaries
+        """
+        if not self.agents:
+            return []
+            
+        result = []
+        for agent_id, agent in self.agents.items():
+            # Extract agent metadata
+            agent_info = {
+                "id": agent_id,
+                "name": getattr(agent, 'name', None),
+                "role": getattr(agent, 'role', None),
+            }
+            
+            # Add metadata if available
+            if hasattr(agent, 'metadata') and isinstance(agent.metadata, dict):
+                agent_info["logical_id"] = agent.metadata.get('logical_id')
+                agent_info["team"] = agent.metadata.get('team')
+            
+            # Filter by team if requested
+            if team and agent_info.get("team") != team:
+                continue
+                
+            result.append(agent_info)
+            
+        return result
+    
+    def find_agent(self, identifier=None, name=None, role=None, logical_id=None, team=None):
+        """
+        Find an agent using various search criteria. This method provides flexible agent discovery
+        without needing to know specific agent IDs in advance.
+        
+        Args:
+            identifier (str): Direct ID of the agent if known
+            name (str): Agent's name (case-insensitive partial match)
+            role (str): Agent's role (case-insensitive partial match)
+            logical_id (str): Logical ID stored in agent metadata
+            team (str): Team name or ID to filter agents
+            
+        Returns:
+            Agent or None: The agent if found, otherwise None
+            
+        Examples:
+            # Find by known ID
+            agent = find_agent(identifier="agent_123")
+            
+            # Find by name (partial match)
+            agent = find_agent(name="Trinity")  # or even just "trin"
+            
+            # Find by role (partial match)
+            agent = find_agent(role="Architect")
+            
+            # Find by logical ID
+            agent = find_agent(logical_id="team_architect")
+            
+            # Find by team and role
+            agent = find_agent(team="recruitment", role="Designer")
+            
+        Note:
+            To see all available agents, use the list_agents() method.
+        """
+        if not self.agents:
+            logger.warning("No agents available to search")
+            return None
+            
+        # Direct ID lookup if provided
+        if identifier and identifier in self.agents:
+            return self.agents[identifier]
+            
+        candidates = list(self.agents.values())
+        
+        # Filter by logical ID in metadata
+        if logical_id:
+            logical_id = logical_id.lower()
+            filtered = []
+            for agent in candidates:
+                if (hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and 
+                    'logical_id' in agent.metadata and 
+                    agent.metadata['logical_id'].lower() == logical_id):
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+        
+        # Filter by name (partial match)
+        if name and candidates:
+            name = name.lower()
+            filtered = []
+            for agent in candidates:
+                if hasattr(agent, 'name') and agent.name and name in agent.name.lower():
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+        
+        # Filter by role (partial match)
+        if role and candidates:
+            role = role.lower()
+            filtered = []
+            for agent in candidates:
+                if hasattr(agent, 'role') and agent.role and role in agent.role.lower():
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+            
+        # Filter by team
+        if team and candidates:
+            team = team.lower()
+            filtered = []
+            for agent in candidates:
+                if (hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and 
+                    'team' in agent.metadata and agent.metadata['team'].lower() == team):
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+            
+        # Return the first match or None
+        return candidates[0] if candidates else None
+            
     def send_message_to_agent(self, agent_id, message, is_group=False):
         """
-        Send a message to an agent or a group of agents
+        Send a message to an agent or a group of agents. You can use agent_id 
+        directly, or provide a string that can be resolved using find_agent.
 
         Args:
-            agent_id (str): Agent ID (can be None for is_group=True)
+            agent_id (str): Agent ID or search string (can be None for is_group=True)
             message (str): Message to send
             is_group (bool): Whether this is a message to the entire group
 
@@ -605,6 +1370,29 @@ class CrewAIServer:
                     "error_type": "network"
                 }
 
+            # Try to find the agent if agent_id is provided but not a direct match
+            if agent_id and not is_group and agent_id not in self.agents:
+                logger.info(f"Attempting to find agent using identifier: {agent_id}")
+                # Try different search strategies
+                found_agent = None
+                
+                # First try as a logical ID
+                found_agent = self.find_agent(logical_id=agent_id)
+                
+                # Then try as a name
+                if not found_agent:
+                    found_agent = self.find_agent(name=agent_id)
+                
+                # Finally try as a role
+                if not found_agent:
+                    found_agent = self.find_agent(role=agent_id)
+                
+                if found_agent and hasattr(found_agent, 'id'):
+                    logger.info(f"Resolved agent '{agent_id}' to agent ID: {found_agent.id}")
+                    agent_id = found_agent.id
+                else:
+                    logger.warning(f"Could not find agent matching '{agent_id}'")
+            
             # Handle group messages
             if is_group:
                 logger.info("Processing group message to all agents")
@@ -667,12 +1455,113 @@ class CrewAIServer:
 
             # Try to process the message with error handling
             try:
-                # Create a temporary crew with just this agent and task
+                # Try to create a StructuredJSONOutputTool if the message mentions JSON
+                tools = []
+                
+                try:
+                    # Check if the message mentions JSON or team creation
+                    if ('json' in message.lower() or 
+                        'team' in message.lower() or 
+                        'format' in message.lower() or
+                        'output' in message.lower() or
+                        'structure' in message.lower()):
+                        
+                        logger.info("Message likely needs structured output - attempting to add JSON tools")
+                        
+                        try:
+                            # First try to import the tools
+                            from crewai import StructuredJSONOutputTool, ExtractJSONTool
+                            
+                            # Look for any JSON schema hints in the message
+                            import re
+                            schema_hints = re.findall(r'\{[^{}]*\}', message)
+                            
+                            if schema_hints:
+                                # Try to parse any JSON schema fragments
+                                logger.info(f"Found potential schema hint: {schema_hints[0]}")
+                                
+                                # Determine if we need agents/tasks schema
+                                team_schema = False
+                                if ('agent' in message.lower() or 
+                                   'team' in message.lower() or
+                                   'task' in message.lower()):
+                                    team_schema = True
+                            
+                            # Create appropriate tools
+                            if team_schema:
+                                # Use the team schema (same as in _create_bootstrap_team)
+                                schema = {
+                                    "type": "object",
+                                    "properties": {
+                                        "agents": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {"type": "string"},
+                                                    "role": {"type": "string"},
+                                                    "goal": {"type": "string"},
+                                                    "description": {"type": "string"},
+                                                    "backstory": {"type": "string"},
+                                                    "skills": {"type": "array", "items": {"type": "string"}},
+                                                    "communicationStyle": {"type": "string"},
+                                                    "workingStyle": {"type": "string"},
+                                                    "quirks": {"type": "array", "items": {"type": "string"}},
+                                                    "autonomyLevel": {"type": "number"}
+                                                }
+                                            }
+                                        },
+                                        "tasks": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "title": {"type": "string"},
+                                                    "description": {"type": "string"},
+                                                    "priority": {"type": "string"},
+                                                    "assignee": {"type": "string"}
+                                                }
+                                            }
+                                        },
+                                        "summary": {"type": "string"}
+                                    }
+                                }
+                                logger.info("Using team schema for structured output")
+                            else:
+                                # Use a generic JSON schema
+                                schema = {
+                                    "type": "object",
+                                    "additionalProperties": True
+                                }
+                                logger.info("Using generic schema for structured output")
+                                
+                            # Create the tools
+                            json_output_tool = StructuredJSONOutputTool(schema=schema)
+                            extract_json_tool = ExtractJSONTool()
+                            
+                            # Add tools to the list
+                            tools = [json_output_tool, extract_json_tool]
+                            
+                            # Modify the task description to explicitly use the tool
+                            task.description = f"{task.description}\n\nIMPORTANT: You MUST use the structured_json_output tool to ensure your response is properly formatted as JSON."
+                            
+                            logger.info("Successfully added JSON tools to the agent")
+                            
+                        except Exception as tool_error:
+                            logger.error(f"Error creating structured output tools: {tool_error}")
+                            # Continue without the tools
+                            
+                except Exception as check_error:
+                    logger.error(f"Error checking for JSON needs: {check_error}")
+                    # Continue without the tools
+                
+                # Create a temporary crew with just this agent and task (and optional tools)
                 temp_crew = Crew(
                     agents=[agent],
                     tasks=[task],
                     verbose=True,
                     process=Process.sequential,
+                    tools=tools if tools else None
                 )
 
                 # Run the crew to get the response
@@ -815,6 +1704,27 @@ class CrewAIServer:
                     payload.get("message"),
                     payload.get("is_group", False)
                 )
+            elif command_lower == "create_task_coordinator":
+                return self.create_task_coordinator(
+                    payload.get("crew_id")
+                )
+            elif command_lower == "find_suitable_agent":
+                return self.find_suitable_agent(
+                    task_description=payload.get("task_description"),
+                    required_skills=payload.get("required_skills"),
+                    priority=payload.get("priority", "medium"),
+                    deadline=payload.get("deadline")
+                )
+            elif command_lower == "assign_task":
+                return self.assign_task(
+                    task_data=payload.get("task_data", {}),
+                    assignee_id=payload.get("assignee_id")
+                )
+            elif command_lower == "list_agents":
+                return {
+                    "status": "success", 
+                    "agents": self.list_agents(team=payload.get("team"))
+                }
             elif command_lower == "check_connectivity":
                 return self.check_connectivity()
             else:

@@ -1,51 +1,82 @@
-import React, { useState } from 'react';
-import { Brain, BookOpen, ArrowUpRight, Zap, CheckCircle, ChevronDown, ChevronUp, Download, Search } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Brain, BookOpen, ArrowUpRight, Zap, CheckCircle, ChevronDown, ChevronUp, Download, Search, MessageCircle, FileText, ArrowRight, Network } from 'lucide-react';
+import MemoryVisualization from '../MemoryVisualization';
 import './styles.css';
 
 interface Experience {
   id: string;
   agent_id: string;
-  context: Record<string, any>;
+  context: string;
   decision: string;
-  outcome: Record<string, any>;
-  timestamp: number;
+  outcome: string;
+  timestamp: string;
+  metadata?: Record<string, any>;
 }
 
-interface Pattern {
+interface Insight {
   id: string;
   agent_id: string;
   topic: string;
-  correlation: {
-    type: string;
-    factors: string[];
-    strength: number;
-    description: string;
-  };
-  generated_on: number;
-  applied_count: number;
-  success_rate: number;
+  learning: string;
+  confidence: number;
+  source_experiences: string[];
+  created_at: string;
+}
+
+interface Feedback {
+  id: string;
+  source_id: string;
+  target_id: string;
+  content: string;
+  feedback_type: 'improvement' | 'praise' | 'correction';
+  created_at: string;
+}
+
+interface Reflection {
+  id: string;
+  agent_id: string;
+  focus: string;
+  insights: string[];
+  action_plan: string[];
+  created_at: string;
 }
 
 interface LearningSystemProps {
   experiences?: Experience[];
-  patterns?: Pattern[];
+  insights?: Insight[];
+  reflections?: Reflection[];
+  feedback?: Feedback[];
   agentNames: Record<string, string>;
   onCaptureExperience?: (experience: Omit<Experience, 'id' | 'timestamp'>) => Promise<any>;
   onExtractPatterns?: (agentId: string, topic: string) => Promise<any>;
+  onCreateReflection?: (reflection: Omit<Reflection, 'id' | 'created_at'>) => Promise<any>;
+  onCollectFeedback?: (feedback: Omit<Feedback, 'id' | 'created_at'>) => Promise<any>;
+  onGenerateSummary?: (agentId: string) => Promise<any>;
+  onUpdateAgentContext?: (memoryIds: string[]) => Promise<any>;
 }
 
 export const LearningSystem: React.FC<LearningSystemProps> = ({
   experiences = [],
-  patterns = [],
+  insights = [],
+  reflections = [],
+  feedback = [],
   agentNames,
   onCaptureExperience,
-  onExtractPatterns
+  onExtractPatterns,
+  onCreateReflection,
+  onCollectFeedback,
+  onGenerateSummary,
+  onUpdateAgentContext
 }) => {
-  const [activeTab, setActiveTab] = useState<'experiences' | 'patterns'>('experiences');
+  const [activeTab, setActiveTab] = useState<'experiences' | 'insights' | 'reflections' | 'feedback' | 'visualization'>('experiences');
   const [showCaptureForm, setShowCaptureForm] = useState(false);
   const [showExtractForm, setShowExtractForm] = useState(false);
+  const [showReflectionForm, setShowReflectionForm] = useState(false);
+  const [showFeedbackForm, setShowFeedbackForm] = useState(false);
   const [expandedExperiences, setExpandedExperiences] = useState<string[]>([]);
-  const [expandedPatterns, setExpandedPatterns] = useState<string[]>([]);
+  const [expandedInsights, setExpandedInsights] = useState<string[]>([]);
+  const [expandedReflections, setExpandedReflections] = useState<string[]>([]);
+  const [expandedFeedback, setExpandedFeedback] = useState<string[]>([]);
   
   // Form states for capturing experience
   const [agentId, setAgentId] = useState('');
@@ -59,15 +90,41 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
   const [topic, setTopic] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   
+  // Form states for creating reflection
+  const [reflectionAgentId, setReflectionAgentId] = useState('');
+  const [reflectionFocus, setReflectionFocus] = useState('');
+  const [reflectionInsights, setReflectionInsights] = useState<string[]>(['']);
+  const [reflectionActionPlan, setReflectionActionPlan] = useState<string[]>(['']);
+  const [isCreatingReflection, setIsCreatingReflection] = useState(false);
+  
+  // Form states for collecting feedback
+  const [feedbackSourceId, setFeedbackSourceId] = useState('');
+  const [feedbackTargetId, setFeedbackTargetId] = useState('');
+  const [feedbackContent, setFeedbackContent] = useState('');
+  const [feedbackType, setFeedbackType] = useState<'improvement' | 'praise' | 'correction'>('improvement');
+  const [isCollectingFeedback, setIsCollectingFeedback] = useState(false);
+  
   const toggleExperienceExpand = (id: string) => {
     setExpandedExperiences(prev => 
       prev.includes(id) ? prev.filter(eId => eId !== id) : [...prev, id]
     );
   };
   
-  const togglePatternExpand = (id: string) => {
-    setExpandedPatterns(prev => 
-      prev.includes(id) ? prev.filter(pId => pId !== id) : [...prev, id]
+  const toggleInsightExpand = (id: string) => {
+    setExpandedInsights(prev => 
+      prev.includes(id) ? prev.filter(iId => iId !== id) : [...prev, id]
+    );
+  };
+  
+  const toggleReflectionExpand = (id: string) => {
+    setExpandedReflections(prev => 
+      prev.includes(id) ? prev.filter(rId => rId !== id) : [...prev, id]
+    );
+  };
+  
+  const toggleFeedbackExpand = (id: string) => {
+    setExpandedFeedback(prev => 
+      prev.includes(id) ? prev.filter(fId => fId !== id) : [...prev, id]
     );
   };
   
@@ -119,8 +176,78 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
     }
   };
   
-  const formatTimestamp = (timestamp: number) => {
-    return new Date(timestamp * 1000).toLocaleString();
+  const handleCreateReflection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCreatingReflection(true);
+    
+    try {
+      if (onCreateReflection) {
+        // Filter out empty insights and action plan steps
+        const insights = reflectionInsights.filter(insight => insight.trim().length > 0);
+        const actionPlan = reflectionActionPlan.filter(step => step.trim().length > 0);
+        
+        if (insights.length === 0) {
+          alert('Please add at least one insight');
+          setIsCreatingReflection(false);
+          return;
+        }
+        
+        if (actionPlan.length === 0) {
+          alert('Please add at least one action plan step');
+          setIsCreatingReflection(false);
+          return;
+        }
+        
+        await onCreateReflection({
+          agent_id: reflectionAgentId,
+          focus: reflectionFocus,
+          insights,
+          action_plan: actionPlan
+        });
+        
+        // Reset form on success
+        setReflectionAgentId('');
+        setReflectionFocus('');
+        setReflectionInsights(['']);
+        setReflectionActionPlan(['']);
+        setShowReflectionForm(false);
+      }
+    } catch (error) {
+      console.error('Error creating reflection:', error);
+    } finally {
+      setIsCreatingReflection(false);
+    }
+  };
+  
+  const handleCollectFeedback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCollectingFeedback(true);
+    
+    try {
+      if (onCollectFeedback) {
+        await onCollectFeedback({
+          source_id: feedbackSourceId,
+          target_id: feedbackTargetId,
+          content: feedbackContent,
+          feedback_type: feedbackType
+        });
+        
+        // Reset form on success
+        setFeedbackSourceId('');
+        setFeedbackTargetId('');
+        setFeedbackContent('');
+        setFeedbackType('improvement');
+        setShowFeedbackForm(false);
+      }
+    } catch (error) {
+      console.error('Error collecting feedback:', error);
+    } finally {
+      setIsCollectingFeedback(false);
+    }
+  };
+  
+  const formatTimestamp = (timestamp: string) => {
+    return new Date(timestamp).toLocaleString();
   };
   
   const getAgentName = (id: string) => {
@@ -139,6 +266,67 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
     URL.revokeObjectURL(url);
   };
   
+  // Transform memories for visualization
+  const memoriesForVisualization = useMemo(() => {
+    // Create an array of memory objects for visualization
+    const expMemories = experiences.map(exp => ({
+      id: exp.id,
+      content: exp.decision,
+      source: getAgentName(exp.agent_id),
+      timestamp: exp.timestamp,
+      type: 'experience' as const,
+      tags: ['experience', exp.agent_id],
+      relevance: 1,
+      connections: []
+    }));
+    
+    const insightMemories = insights.map(insight => ({
+      id: insight.id,
+      content: insight.learning,
+      source: getAgentName(insight.agent_id),
+      timestamp: insight.created_at,
+      type: 'insight' as const,
+      tags: ['insight', insight.topic, insight.agent_id],
+      relevance: insight.confidence,
+      connections: insight.source_experiences
+    }));
+    
+    const reflectionMemories = reflections.map(reflection => ({
+      id: reflection.id,
+      content: reflection.focus,
+      source: getAgentName(reflection.agent_id),
+      timestamp: reflection.created_at,
+      type: 'reflection' as const,
+      tags: ['reflection', reflection.agent_id],
+      relevance: 1,
+      connections: reflection.insights
+    }));
+    
+    const feedbackMemories = feedback.map(f => ({
+      id: f.id,
+      content: f.content,
+      source: getAgentName(f.source_id),
+      timestamp: f.created_at,
+      type: 'feedback' as const,
+      tags: ['feedback', f.feedback_type, f.source_id, f.target_id],
+      relevance: 1,
+      connections: [f.target_id]
+    }));
+    
+    return [...expMemories, ...insightMemories, ...reflectionMemories, ...feedbackMemories];
+  }, [experiences, insights, reflections, feedback, agentNames]);
+  
+  // Handle context updates
+  const handleContextUpdate = async (memoryIds: string[]) => {
+    if (onUpdateAgentContext) {
+      try {
+        await onUpdateAgentContext(memoryIds);
+      } catch (error) {
+        console.error('Error updating agent context:', error);
+      }
+    }
+  };
+
   return (
     <div className="learning-system tribe-card">
       <div className="learning-system-header">
@@ -157,11 +345,32 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
           <span>Experiences</span>
         </button>
         <button 
-          className={`learning-system-tab ${activeTab === 'patterns' ? 'active' : ''}`}
-          onClick={() => setActiveTab('patterns')}
+          className={`learning-system-tab ${activeTab === 'insights' ? 'active' : ''}`}
+          onClick={() => setActiveTab('insights')}
         >
           <Zap size={16} />
-          <span>Patterns</span>
+          <span>Insights</span>
+        </button>
+        <button 
+          className={`learning-system-tab ${activeTab === 'reflections' ? 'active' : ''}`}
+          onClick={() => setActiveTab('reflections')}
+        >
+          <Search size={16} />
+          <span>Reflections</span>
+        </button>
+        <button 
+          className={`learning-system-tab ${activeTab === 'feedback' ? 'active' : ''}`}
+          onClick={() => setActiveTab('feedback')}
+        >
+          <MessageCircle size={16} />
+          <span>Feedback</span>
+        </button>
+        <button 
+          className={`learning-system-tab ${activeTab === 'visualization' ? 'active' : ''}`}
+          onClick={() => setActiveTab('visualization')}
+        >
+          <Network size={16} />
+          <span>Memory Map</span>
         </button>
       </div>
       
@@ -198,12 +407,12 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
                   </div>
                   
                   <div className="form-group">
-                    <label htmlFor="context">Context (JSON)</label>
+                    <label htmlFor="context">Context</label>
                     <textarea
                       id="context"
                       value={contextValue}
                       onChange={(e) => setContextValue(e.target.value)}
-                      placeholder='{"task": "feature_implementation", "complexity": "high"}'
+                      placeholder="Describe the situation or problem that required a decision"
                       rows={3}
                       required
                     />
@@ -216,18 +425,18 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
                       id="decision"
                       value={decision}
                       onChange={(e) => setDecision(e.target.value)}
-                      placeholder="e.g., delegate_to_specialist"
+                      placeholder="What action or decision was taken"
                       required
                     />
                   </div>
                   
                   <div className="form-group">
-                    <label htmlFor="outcome">Outcome (JSON)</label>
+                    <label htmlFor="outcome">Outcome</label>
                     <textarea
                       id="outcome"
                       value={outcomeValue}
                       onChange={(e) => setOutcomeValue(e.target.value)}
-                      placeholder='{"success": true, "time_taken": 120}'
+                      placeholder="What was the result of the decision"
                       rows={3}
                       required
                     />
@@ -308,13 +517,20 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
                         <div className="experience-details">
                           <div className="detail-section">
                             <h4>Context</h4>
-                            <pre>{JSON.stringify(experience.context, null, 2)}</pre>
+                            <p>{experience.context}</p>
                           </div>
                           
                           <div className="detail-section">
                             <h4>Outcome</h4>
-                            <pre>{JSON.stringify(experience.outcome, null, 2)}</pre>
+                            <p>{experience.outcome}</p>
                           </div>
+                          
+                          {experience.metadata && Object.keys(experience.metadata).length > 0 && (
+                            <div className="detail-section">
+                              <h4>Metadata</h4>
+                              <pre>{JSON.stringify(experience.metadata, null, 2)}</pre>
+                            </div>
+                          )}
                           
                           <div className="experience-actions">
                             <button 
@@ -333,21 +549,21 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
               )}
             </div>
           </div>
-        ) : (
-          <div className="patterns-tab">
+        ) : activeTab === 'insights' ? (
+          <div className="insights-tab">
             <div className="tab-actions">
               <button 
                 className="action-button"
                 onClick={() => setShowExtractForm(!showExtractForm)}
               >
-                <Search size={16} />
-                {showExtractForm ? 'Cancel' : 'Extract Patterns'}
+                <Zap size={16} />
+                {showExtractForm ? 'Cancel' : 'Extract Insights'}
               </button>
             </div>
             
             {showExtractForm && (
               <div className="extract-form-container">
-                <h3>Extract Patterns</h3>
+                <h3>Extract Insights</h3>
                 <form onSubmit={handleExtractPatterns}>
                   <div className="form-group">
                     <label htmlFor="extractAgentId">Agent</label>
@@ -371,7 +587,7 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
                       id="topic"
                       value={topic}
                       onChange={(e) => setTopic(e.target.value)}
-                      placeholder="e.g., feature_implementation"
+                      placeholder="e.g., Error Handling"
                       required
                     />
                   </div>
@@ -396,8 +612,8 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
                         </>
                       ) : (
                         <>
-                          <Search size={14} />
-                          Extract Patterns
+                          <Zap size={14} />
+                          Extract Insights
                         </>
                       )}
                     </button>
@@ -406,42 +622,41 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
               </div>
             )}
             
-            <div className="patterns-list">
-              <h3>Extracted Patterns ({patterns.length})</h3>
+            <div className="insights-list">
+              <h3>Extracted Insights ({insights.length})</h3>
               
-              {patterns.length === 0 ? (
+              {insights.length === 0 ? (
                 <div className="empty-state">
-                  <p>No patterns extracted yet.</p>
+                  <p>No insights extracted yet.</p>
                   <button 
                     className="action-button"
                     onClick={() => setShowExtractForm(true)}
                   >
-                    <Search size={16} />
-                    Extract First Pattern
+                    <Zap size={16} />
+                    Extract First Insight
                   </button>
                 </div>
               ) : (
                 <>
-                  {patterns.map((pattern) => (
+                  {insights.map((insight) => (
                     <div 
-                      key={pattern.id} 
-                      className={`pattern-item ${expandedPatterns.includes(pattern.id) ? 'expanded' : ''}`}
+                      key={insight.id} 
+                      className={`insight-item ${expandedInsights.includes(insight.id) ? 'expanded' : ''}`}
                     >
                       <div 
-                        className="pattern-header"
-                        onClick={() => togglePatternExpand(pattern.id)}
+                        className="insight-header"
+                        onClick={() => toggleInsightExpand(insight.id)}
                       >
-                        <div className="pattern-title">
-                          <span className="pattern-topic">{pattern.topic}</span>
-                          <span className="pattern-correlation-type">{pattern.correlation.type}</span>
-                          <span className="pattern-agent">{getAgentName(pattern.agent_id)}</span>
+                        <div className="insight-title">
+                          <span className="insight-topic">{insight.topic}</span>
+                          <span className="insight-agent">{getAgentName(insight.agent_id)}</span>
                         </div>
-                        <div className="pattern-meta">
-                          <span className="pattern-success-rate">
-                            <CheckCircle size={14} /> {(pattern.success_rate * 100).toFixed(0)}%
+                        <div className="insight-meta">
+                          <span className="insight-confidence">
+                            <CheckCircle size={14} /> {(insight.confidence * 100).toFixed(0)}%
                           </span>
                           <button className="expand-button">
-                            {expandedPatterns.includes(pattern.id) ? (
+                            {expandedInsights.includes(insight.id) ? (
                               <ChevronUp size={16} />
                             ) : (
                               <ChevronDown size={16} />
@@ -450,48 +665,33 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
                         </div>
                       </div>
                       
-                      {expandedPatterns.includes(pattern.id) && (
-                        <div className="pattern-details">
+                      {expandedInsights.includes(insight.id) && (
+                        <div className="insight-details">
                           <div className="detail-section">
-                            <h4>Description</h4>
-                            <p>{pattern.correlation.description}</p>
+                            <h4>Learning</h4>
+                            <p>{insight.learning}</p>
                           </div>
                           
                           <div className="detail-section">
-                            <h4>Factors</h4>
-                            <ul>
-                              {pattern.correlation.factors.map((factor, i) => (
-                                <li key={i}>{factor}</li>
-                              ))}
+                            <h4>Source Experiences</h4>
+                            <p>{insight.source_experiences.length} experiences contributed to this insight</p>
+                            <ul className="source-experiences-list">
+                              {insight.source_experiences.map((expId, i) => {
+                                const exp = experiences.find(e => e.timestamp === expId);
+                                return (
+                                  <li key={i}>
+                                    {exp ? exp.decision : expId}
+                                    {exp && <span className="experience-time">{formatTimestamp(exp.timestamp)}</span>}
+                                  </li>
+                                );
+                              })}
                             </ul>
                           </div>
                           
-                          <div className="detail-section">
-                            <h4>Statistics</h4>
-                            <div className="pattern-stats">
-                              <div className="pattern-stat">
-                                <span className="stat-label">Correlation Strength</span>
-                                <span className="stat-value">{(pattern.correlation.strength * 100).toFixed(0)}%</span>
-                              </div>
-                              <div className="pattern-stat">
-                                <span className="stat-label">Applied Count</span>
-                                <span className="stat-value">{pattern.applied_count}</span>
-                              </div>
-                              <div className="pattern-stat">
-                                <span className="stat-label">Success Rate</span>
-                                <span className="stat-value">{(pattern.success_rate * 100).toFixed(0)}%</span>
-                              </div>
-                              <div className="pattern-stat">
-                                <span className="stat-label">Generated On</span>
-                                <span className="stat-value">{formatTimestamp(pattern.generated_on)}</span>
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="pattern-actions">
+                          <div className="insight-actions">
                             <button 
                               className="action-button-small"
-                              onClick={() => downloadJson(pattern, `pattern-${pattern.id}.json`)}
+                              onClick={() => downloadJson(insight, `insight-${insight.id}.json`)}
                             >
                               <Download size={14} />
                               Export
@@ -503,6 +703,447 @@ export const LearningSystem: React.FC<LearningSystemProps> = ({
                   ))}
                 </>
               )}
+            </div>
+          </div>
+        ) : activeTab === 'reflections' ? (
+          <div className="reflections-tab">
+            <div className="tab-actions">
+              <button 
+                className="action-button"
+                onClick={() => setShowReflectionForm(!showReflectionForm)}
+              >
+                <FileText size={16} />
+                {showReflectionForm ? 'Cancel' : 'Create Reflection'}
+              </button>
+            </div>
+            
+            {showReflectionForm && (
+              <div className="reflection-form-container">
+                <h3>Create Reflection</h3>
+                <form onSubmit={handleCreateReflection}>
+                  <div className="form-group">
+                    <label htmlFor="reflectionAgentId">Agent</label>
+                    <select
+                      id="reflectionAgentId"
+                      value={reflectionAgentId}
+                      onChange={(e) => setReflectionAgentId(e.target.value)}
+                      required
+                    >
+                      <option value="">Select an agent</option>
+                      {Object.entries(agentNames).map(([id, name]) => (
+                        <option key={id} value={id}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="reflectionFocus">Focus</label>
+                    <input
+                      type="text"
+                      id="reflectionFocus"
+                      value={reflectionFocus}
+                      onChange={(e) => setReflectionFocus(e.target.value)}
+                      placeholder="e.g., Code Quality"
+                      required
+                    />
+                  </div>
+                  
+                  <div className="form-group">
+                    <label>Insights</label>
+                    {reflectionInsights.map((insight, index) => (
+                      <div className="array-input-row" key={`insight-${index}`}>
+                        <input
+                          type="text"
+                          value={insight}
+                          onChange={(e) => {
+                            const newInsights = [...reflectionInsights];
+                            newInsights[index] = e.target.value;
+                            setReflectionInsights(newInsights);
+                          }}
+                          placeholder="Enter an insight"
+                        />
+                        <button
+                          type="button"
+                          className="array-input-button remove"
+                          onClick={() => {
+                            if (reflectionInsights.length > 1) {
+                              const newInsights = reflectionInsights.filter((_, i) => i !== index);
+                              setReflectionInsights(newInsights);
+                            }
+                          }}
+                        >
+                          -
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="array-input-button add"
+                      onClick={() => setReflectionInsights([...reflectionInsights, ''])}
+                    >
+                      + Add Insight
+                    </button>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label>Action Plan</label>
+                    {reflectionActionPlan.map((step, index) => (
+                      <div className="array-input-row" key={`step-${index}`}>
+                        <input
+                          type="text"
+                          value={step}
+                          onChange={(e) => {
+                            const newSteps = [...reflectionActionPlan];
+                            newSteps[index] = e.target.value;
+                            setReflectionActionPlan(newSteps);
+                          }}
+                          placeholder="Enter an action step"
+                        />
+                        <button
+                          type="button"
+                          className="array-input-button remove"
+                          onClick={() => {
+                            if (reflectionActionPlan.length > 1) {
+                              const newSteps = reflectionActionPlan.filter((_, i) => i !== index);
+                              setReflectionActionPlan(newSteps);
+                            }
+                          }}
+                        >
+                          -
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="array-input-button add"
+                      onClick={() => setReflectionActionPlan([...reflectionActionPlan, ''])}
+                    >
+                      + Add Action Step
+                    </button>
+                  </div>
+                  
+                  <div className="form-actions">
+                    <button 
+                      type="button" 
+                      className="cancel-button"
+                      onClick={() => setShowReflectionForm(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="submit-button"
+                      disabled={isCreatingReflection}
+                    >
+                      {isCreatingReflection ? (
+                        <>
+                          <div className="spinner"></div>
+                          Creating...
+                        </>
+                      ) : (
+                        <>
+                          <FileText size={14} />
+                          Create Reflection
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+            
+            <div className="reflections-list">
+              <h3>Reflections ({reflections.length})</h3>
+              
+              {reflections.length === 0 ? (
+                <div className="empty-state">
+                  <p>No reflections created yet.</p>
+                  <button 
+                    className="action-button"
+                    onClick={() => setShowReflectionForm(true)}
+                  >
+                    <FileText size={16} />
+                    Create First Reflection
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {reflections.map((reflection) => (
+                    <div 
+                      key={reflection.id} 
+                      className={`reflection-item ${expandedReflections.includes(reflection.id) ? 'expanded' : ''}`}
+                    >
+                      <div 
+                        className="reflection-header"
+                        onClick={() => toggleReflectionExpand(reflection.id)}
+                      >
+                        <div className="reflection-title">
+                          <span className="reflection-focus">{reflection.focus}</span>
+                          <span className="reflection-agent">{getAgentName(reflection.agent_id)}</span>
+                        </div>
+                        <div className="reflection-meta">
+                          <span className="reflection-time">{formatTimestamp(reflection.created_at)}</span>
+                          <button className="expand-button">
+                            {expandedReflections.includes(reflection.id) ? (
+                              <ChevronUp size={16} />
+                            ) : (
+                              <ChevronDown size={16} />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {expandedReflections.includes(reflection.id) && (
+                        <div className="reflection-details">
+                          <div className="detail-section">
+                            <h4>Insights</h4>
+                            <ul>
+                              {reflection.insights.map((insight, i) => (
+                                <li key={i}>{insight}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          
+                          <div className="detail-section">
+                            <h4>Action Plan</h4>
+                            <ol>
+                              {reflection.action_plan.map((step, i) => (
+                                <li key={i}>{step}</li>
+                              ))}
+                            </ol>
+                          </div>
+                          
+                          <div className="reflection-actions">
+                            <button 
+                              className="action-button-small"
+                              onClick={() => downloadJson(reflection, `reflection-${reflection.id}.json`)}
+                            >
+                              <Download size={14} />
+                              Export
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        ) : activeTab === 'feedback' ? (
+          <div className="feedback-tab">
+            <div className="tab-actions">
+              <button 
+                className="action-button"
+                onClick={() => setShowFeedbackForm(!showFeedbackForm)}
+              >
+                <MessageCircle size={16} />
+                {showFeedbackForm ? 'Cancel' : 'Give Feedback'}
+              </button>
+            </div>
+            
+            {showFeedbackForm && (
+              <div className="feedback-form-container">
+                <h3>Give Feedback</h3>
+                <form onSubmit={handleCollectFeedback}>
+                  <div className="form-group">
+                    <label htmlFor="feedbackSourceId">From Agent</label>
+                    <select
+                      id="feedbackSourceId"
+                      value={feedbackSourceId}
+                      onChange={(e) => setFeedbackSourceId(e.target.value)}
+                      required
+                    >
+                      <option value="">Select source agent</option>
+                      {Object.entries(agentNames).map(([id, name]) => (
+                        <option key={id} value={id}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="feedbackTargetId">To Agent</label>
+                    <select
+                      id="feedbackTargetId"
+                      value={feedbackTargetId}
+                      onChange={(e) => setFeedbackTargetId(e.target.value)}
+                      required
+                    >
+                      <option value="">Select target agent</option>
+                      {Object.entries(agentNames).map(([id, name]) => (
+                        <option key={id} value={id}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="feedbackType">Type</label>
+                    <select
+                      id="feedbackType"
+                      value={feedbackType}
+                      onChange={(e) => setFeedbackType(e.target.value as any)}
+                      required
+                    >
+                      <option value="improvement">Improvement</option>
+                      <option value="praise">Praise</option>
+                      <option value="correction">Correction</option>
+                    </select>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label htmlFor="feedbackContent">Content</label>
+                    <textarea
+                      id="feedbackContent"
+                      value={feedbackContent}
+                      onChange={(e) => setFeedbackContent(e.target.value)}
+                      placeholder="Enter your feedback message"
+                      rows={3}
+                      required
+                    />
+                  </div>
+                  
+                  <div className="form-actions">
+                    <button 
+                      type="button" 
+                      className="cancel-button"
+                      onClick={() => setShowFeedbackForm(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      type="submit" 
+                      className="submit-button"
+                      disabled={isCollectingFeedback}
+                    >
+                      {isCollectingFeedback ? (
+                        <>
+                          <div className="spinner"></div>
+                          Submitting...
+                        </>
+                      ) : (
+                        <>
+                          <MessageCircle size={14} />
+                          Submit Feedback
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+            
+            <div className="feedback-list">
+              <h3>Feedback ({feedback.length})</h3>
+              
+              {feedback.length === 0 ? (
+                <div className="empty-state">
+                  <p>No feedback collected yet.</p>
+                  <button 
+                    className="action-button"
+                    onClick={() => setShowFeedbackForm(true)}
+                  >
+                    <MessageCircle size={16} />
+                    Give First Feedback
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {feedback.map((f) => (
+                    <div 
+                      key={f.id} 
+                      className={`feedback-item ${expandedFeedback.includes(f.id) ? 'expanded' : ''} feedback-type-${f.feedback_type}`}
+                    >
+                      <div 
+                        className="feedback-header"
+                        onClick={() => toggleFeedbackExpand(f.id)}
+                      >
+                        <div className="feedback-title">
+                          <span className={`feedback-type feedback-type-${f.feedback_type}`}>
+                            {f.feedback_type.charAt(0).toUpperCase() + f.feedback_type.slice(1)}
+                          </span>
+                          <span className="feedback-flow">
+                            {getAgentName(f.source_id)} <ArrowRight size={12} /> {getAgentName(f.target_id)}
+                          </span>
+                        </div>
+                        <div className="feedback-meta">
+                          <span className="feedback-time">{formatTimestamp(f.created_at)}</span>
+                          <button className="expand-button">
+                            {expandedFeedback.includes(f.id) ? (
+                              <ChevronUp size={16} />
+                            ) : (
+                              <ChevronDown size={16} />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {expandedFeedback.includes(f.id) && (
+                        <div className="feedback-details">
+                          <div className="detail-section">
+                            <h4>Content</h4>
+                            <p>{f.content}</p>
+                          </div>
+                          
+                          <div className="feedback-actions">
+                            <button 
+                              className="action-button-small"
+                              onClick={() => downloadJson(f, `feedback-${f.id}.json`)}
+                            >
+                              <Download size={14} />
+                              Export
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
+          // Memory Visualization tab
+          <div className="visualization-tab">
+            <div className="tab-actions">
+              <button 
+                className="action-button"
+                onClick={() => {
+                  if (onGenerateSummary) {
+                    onGenerateSummary('all'); // Generate summary for all agents
+                  }
+                }}
+              >
+                <Zap size={16} />
+                Refresh Connections
+              </button>
+              <div className="visualization-info">
+                <p>Select memories to include in agent context. Different views help you find patterns and connections.</p>
+              </div>
+            </div>
+            
+            <div className="memory-visualization-wrapper">
+              <MemoryVisualization 
+                memories={memoriesForVisualization}
+                onMemorySelect={(memory) => {
+                  console.log('Selected memory:', memory);
+                  
+                  // Expand the corresponding item in its tab
+                  if (memory.type === 'experience') {
+                    toggleExperienceExpand(memory.id);
+                    setActiveTab('experiences');
+                  } else if (memory.type === 'insight') {
+                    toggleInsightExpand(memory.id);
+                    setActiveTab('insights');
+                  } else if (memory.type === 'reflection') {
+                    toggleReflectionExpand(memory.id);
+                    setActiveTab('reflections');
+                  } else if (memory.type === 'feedback') {
+                    toggleFeedbackExpand(memory.id);
+                    setActiveTab('feedback');
+                  }
+                }}
+                onContextUpdate={handleContextUpdate}
+              />
             </div>
           </div>
         )}

@@ -1,5 +1,9 @@
-import React from 'react';
+import React, { useEffect, useContext } from 'react';
 import './styles.css';
+import { getVsCodeApi } from '../../../../vscode';
+
+// Initialize VS Code API
+const vscode = getVsCodeApi();
 
 interface Task {
   id: string;
@@ -30,6 +34,12 @@ export const TaskList: React.FC<TaskListProps> = ({ tasks }) => {
 
   // Check if there are any tasks
   const hasTasks = tasks.length > 0;
+  
+  // Request agent data when component mounts
+  useEffect(() => {
+    // This is just to make sure VSCode re-renders the component
+    vscode.postMessage({ type: 'REFRESH_VIEW' });
+  }, []);
 
   return (
     <div className="task-list">
