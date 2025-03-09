@@ -1273,9 +1273,13 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                 }
                 
                 // Create a list of agent names and roles for the final message
-                const agentList = teamData.agents.map((agent: any) => 
-                    `* **${agent.name}** (${agent.role}) - ${agent.description.split('.')[0]}`
-                ).join('\n');
+                const agentList = teamData.agents.map((agent: any) => {
+                    // Safely handle description which might be undefined
+                    const shortDescription = agent.description 
+                        ? agent.description.split('.')[0] 
+                        : `${agent.role} specialist`;
+                    return `* **${agent.name}** (${agent.role}) - ${shortDescription}`;
+                }).join('\n');
                 
                 // Prepare final message content based on whether we used fallback team
                 let finalMessageContent = '';

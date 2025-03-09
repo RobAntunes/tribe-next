@@ -41,12 +41,6 @@ venv_paths = [
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         "crewai_venv", "lib", "python3.10", "site-packages"
     )),
-    # Default .venv
-    os.path.abspath(os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        ".venv", "lib", "python3.10", "site-packages"
-    )),
-    # Add more paths if needed
 ]
 
 # Add all existing venv paths to sys.path
@@ -286,7 +280,12 @@ class CrewAIServer:
                 "backstory": agent_data.get("backstory", "An AI assistant with extensive knowledge."),
                 "verbose": True,
                 "allow_delegation": agent_data.get("allow_delegation", False),
+                "name": agent_data.get("name", agent_data.get("character_name", "Agent")),
             }
+            
+            # Ensure name is always set
+            if "name" not in agent_args and "role" in agent_args:
+                agent_args["name"] = agent_args["role"]
 
             # Determine the optimal model to use
             # First, check if we have API keys with specific model preferences
@@ -360,7 +359,91 @@ class CrewAIServer:
             else:
                 logger.warning("No LLM available for agent creation - may have limited functionality")
 
-            agent = Agent(**agent_args)
+            # Get the agent name from various sources
+            name_value = agent_args.get('name') or agent_args.get('character_name') or agent_args.get('role', 'Agent')
+            
+            # Add to both name and character_name for compatibility
+            agent_args['name'] = name_value
+            agent_args['character_name'] = name_value
+            
+            # Create a version of args without name-related fields for fallback
+            fallback_args = {k: v for k, v in agent_args.items() if k not in ['name', 'character_name']}
+            
+            # Try multiple approaches to create the agent
+            agent = None
+            creation_errors = []
+            
+            # Approach 1: Try with our customized ExtendedAgent
+            try:
+                from crewai_adapter import ExtendedAgent as AdapterExtendedAgent
+                agent = AdapterExtendedAgent(**agent_args)
+                logger.info(f"Created agent using adapter's ExtendedAgent for {name_value}")
+            except Exception as e:
+                creation_errors.append(f"Adapter ExtendedAgent error: {str(e)}")
+            
+            # Approach 2: Try with CrewAI's ExtendedAgent if available
+            if agent is None:
+                try:
+                    from crewai import ExtendedAgent
+                    agent = ExtendedAgent(**agent_args)
+                    logger.info(f"Created agent using CrewAI's ExtendedAgent for {name_value}")
+                except Exception as e:
+                    creation_errors.append(f"CrewAI ExtendedAgent error: {str(e)}")
+            
+            # Approach 3: Try with only required fields as fallback
+            if agent is None:
+                try:
+                    essential_args = {
+                        'role': agent_args['role'],
+                        'goal': agent_args.get('goal', 'Help the team accomplish its objectives'),
+                        'backstory': agent_args.get('backstory', f"A skilled {agent_args['role']}"),
+                        'verbose': agent_args.get('verbose', True),
+                        'allow_delegation': agent_args.get('allow_delegation', False)
+                    }
+                    
+                    # Add LLM if available
+                    if 'llm' in agent_args:
+                        essential_args['llm'] = agent_args['llm']
+                        
+                    agent = Agent(**essential_args)
+                    logger.info(f"Created basic Agent for {name_value}")
+                    
+                    # Add name and metadata manually to the agent object
+                    try:
+                        agent.__dict__['_name'] = name_value
+                        agent.__dict__['metadata'] = agent.__dict__.get('metadata', {})
+                        if isinstance(agent.__dict__['metadata'], dict):
+                            agent.__dict__['metadata']['name'] = name_value
+                            agent.__dict__['metadata']['character_name'] = name_value
+                    except Exception as set_err:
+                        logger.warning(f"Could not add name to agent __dict__: {set_err}")
+                except Exception as e:
+                    creation_errors.append(f"Basic Agent error: {str(e)}")
+            
+            # If all approaches failed
+            if agent is None:
+                logger.error(f"All agent creation approaches failed: {creation_errors}")
+                raise RuntimeError(f"Failed to create agent: {creation_errors}")
+            
+            # Add property to safely get name if possible
+            if not hasattr(agent, 'name') or not callable(getattr(agent, 'name', None)):
+                try:
+                    # Try to add a name property dynamically
+                    def get_name(self):
+                        if hasattr(self, '_name'):
+                            return self._name
+                        if hasattr(self, 'metadata') and isinstance(self.metadata, dict):
+                            if 'name' in self.metadata:
+                                return self.metadata['name']
+                            if 'character_name' in self.metadata:
+                                return self.metadata['character_name']
+                        return self.role
+                    
+                    # Only set if it doesn't already exist
+                    if not hasattr(agent.__class__, 'name') or not isinstance(agent.__class__.name, property):
+                        setattr(agent.__class__, 'name', property(get_name))
+                except Exception as prop_err:
+                    logger.warning(f"Could not add name property to agent: {prop_err}")
 
             # Store the agent
             self.agents[agent_id] = agent
@@ -584,17 +667,95 @@ class CrewAIServer:
                 # Try to create the recruitment team agent with ExtendedAgent if available
                 try:
                     # Import the extended agent class if available
-                    from crewai import ExtendedAgent
-                    agent = ExtendedAgent(**agent_data_copy)
+                    try:
+                        from crewai import ExtendedAgent
+                    except ImportError:
+                        # If not available in crewai, use our own
+                        from crewai_adapter import ExtendedAgent
+                    
+                    # Make a copy that we can modify
+                    agent_data_clean = agent_data_copy.copy()
+                    
+                    # Make sure name is available somewhere
+                    name_value = agent_data_clean.get('name') or agent_data_clean.get('character_name') or agent_data_clean.get('role', 'Agent')
+                    
+                    # Include both name and character_name for compatibility
+                    agent_data_clean['name'] = name_value
+                    agent_data_clean['character_name'] = name_value
+                    
+                    # Prepare fallback kwargs without name/character_name
+                    fallback_kwargs = {k: v for k, v in agent_data_clean.items() if k not in ['name', 'character_name']}
+                    
+                    # Try multiple approaches to create the agent
+                    agent = None
+                    creation_errors = []
+                    
+                    # Approach 1: Try with our customized ExtendedAgent
+                    try:
+                        from crewai_adapter import ExtendedAgent as AdapterExtendedAgent
+                        agent = AdapterExtendedAgent(**agent_data_clean)
+                        logger.debug("Created agent using adapter's ExtendedAgent")
+                    except Exception as e:
+                        creation_errors.append(f"Adapter ExtendedAgent error: {str(e)}")
+                    
+                    # Approach 2: Try with CrewAI's ExtendedAgent if available
+                    if agent is None:
+                        try:
+                            agent = ExtendedAgent(**agent_data_clean)
+                            logger.debug("Created agent using CrewAI's ExtendedAgent")
+                        except Exception as e:
+                            creation_errors.append(f"CrewAI ExtendedAgent error: {str(e)}")
+                    
+                    # Approach 3: Try with only required fields
+                    if agent is None:
+                        try:
+                            agent = Agent(
+                                role=agent_data_clean['role'],
+                                goal=agent_data_clean.get('goal', 'Help the team accomplish its objectives'),
+                                backstory=agent_data_clean.get('backstory', f"A skilled {agent_data_clean['role']}")
+                            )
+                            logger.debug("Created basic agent with required fields only")
+                            
+                            # Manually set name in agent.__dict__
+                            agent.__dict__['_name'] = name_value
+                            agent.__dict__['metadata'] = agent.__dict__.get('metadata', {})
+                            if isinstance(agent.__dict__['metadata'], dict):
+                                agent.__dict__['metadata']['name'] = name_value
+                                agent.__dict__['metadata']['character_name'] = name_value
+                        except Exception as e:
+                            creation_errors.append(f"Basic Agent error: {str(e)}")
+                    
+                    # Log if all approaches failed
+                    if agent is None:
+                        logger.error(f"All agent creation approaches failed: {creation_errors}")
+                        raise RuntimeError(f"Failed to create agent: {creation_errors}")
+                        
                     team_agents.append(agent)
                     # Store the agent using its assigned ID
                     self.agents[agent.id] = agent
                     logger.debug(f"Created agent with ID {agent.id}, name: {getattr(agent, 'name', None)}")
                 except (ImportError, AttributeError) as e:
                     logger.error(f"Error creating ExtendedAgent: {str(e)}")
-                    # Fall back to regular agent creation
-                    agent = self._create_agent_from_data(agent_data_copy)
-                    if agent:
+                    # Fall back to our more robust agent creation method
+                    try:
+                        agent = self._create_agent_from_data(agent_data_copy)
+                    except Exception as e:
+                        logger.error(f"Even _create_agent_from_data failed: {e}")
+                        # Last-ditch effort - create absolute minimalist agent
+                        agent = Agent(
+                            role=agent_data_copy['role'], 
+                            goal="Help the team accomplish its objectives",
+                            backstory=f"A skilled {agent_data_copy['role']}"
+                        )
+                        
+                        # Force name into the object's __dict__
+                        name_value = agent_data_copy.get('name', agent_data_copy.get('character_name', agent_data_copy.get('role', 'Agent')))
+                        agent.__dict__['_name'] = name_value
+                        agent.__dict__['metadata'] = {'name': name_value, 'character_name': name_value}
+                        logger.warning(f"Created minimalist agent with role {agent_data_copy['role']}")
+                    
+                    # Add to team_agents and store in self.agents
+                    if agent:    
                         team_agents.append(agent)
                         # Store agent using its assigned ID if available
                         if hasattr(agent, 'id'):
@@ -675,102 +836,376 @@ class CrewAIServer:
                 
                 return {"status": "error", "message": f"Failed to identify required recruitment agents: {', '.join(missing_agents)}"}
             
-            # Create the recruitment team tasks
-            recruitment_tasks = [
-                # Task 1: Analyze project and break into phases
-                Task(
-                    description=f"Analyze the following project description and break it into logical phases: '{project_description}'. "
-                               f"For each phase, provide: 1) A name, 2) Key objectives, 3) Required skills. "
-                               f"IMPORTANT: Use the structured_json_output tool to format your response as a JSON object.",
-                    agent=project_analyzer,
-                    expected_output="A JSON object with an array of project phases, each with name, objectives, and required skills. You MUST use the structured_json_output tool to ensure your response is properly formatted."
-                ),
-                # Task 2: Design team structure for Phase 1
-                Task(
-                    description="Based on the project analysis, design an optimal team structure for Phase 1. "
-                               "The team should include 3-5 specialized agents with complementary skills. "
-                               "IMPORTANT: Use the structured_json_output tool to format your response as a JSON object.",
-                    agent=team_architect,
-                    expected_output="A JSON object describing the team structure with roles, responsibilities, and relationships between agents. You MUST use the structured_json_output tool to ensure your response is properly formatted."
-                ),
-                # Task 3: Create detailed agent profiles
-                Task(
-                    description="Create detailed profiles for each agent in the team. Each profile must include: "
-                               "character name, role, goal, backstory, tone, learning style, working style, "
-                               "communication style, and 2-3 quirks that make the agent's personality distinctive. "
-                               "IMPORTANT: Use the structured_json_output tool to format your response as a JSON array.",
-                    agent=agent_designer,
-                    expected_output="A JSON array of agent profiles with all required fields. You MUST use the structured_json_output tool to ensure your response is properly formatted."
-                )
-            ]
+            # Create the JSON schema for project phases
+            project_phases_schema = {
+                "type": "object",
+                "properties": {
+                    "phases": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["name", "objectives", "required_traits"],
+                            "properties": {
+                                "name": {"type": "string"},
+                                "objectives": {"type": "array", "items": {"type": "string"}},
+                                "required_traits": {"type": "array", "items": {"type": "string"}}
+                            }
+                        }
+                    },
+                    "summary": {"type": "string"}
+                },
+                "required": ["phases"]
+            }
             
-            try:
-                # First, create and register tools for better JSON output
-                try:
-                    from crewai import StructuredJSONOutputTool
-                    from crewai import ExtractJSONTool
-                    
-                    # Define the exact JSON schema we expect
-                    team_schema = {
+            # Create the JSON schema for team structure
+            team_structure_schema = {
+                "type": "object",
+                "properties": {
+                    "teams": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["name", "members"],
+                            "properties": {
+                                "id": {"type": "string"},
+                                "name": {"type": "string"},
+                                "description": {"type": "string"},
+                                "focus_area": {"type": "string"},
+                                "parent_team_id": {"type": "string", "description": "ID of parent team if this is a sub-team"},
+                                "members": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["role", "responsibilities", "traits"],
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "role": {"type": "string"},
+                                            "responsibilities": {"type": "array", "items": {"type": "string"}},
+                                            "traits": {"type": "array", "items": {"type": "string"}},
+                                            "is_team_lead": {"type": "boolean", "description": "Whether this agent leads the team"},
+                                            "sub_team_id": {"type": "string", "description": "ID of a sub-team this agent leads, if applicable"},
+                                            "relationships": {
+                                                "type": "array", 
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "with": {"type": "string"},
+                                                        "nature": {"type": "string"}
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "team_hierarchy": {
                         "type": "object",
+                        "description": "Visual representation of team hierarchy",
                         "properties": {
-                            "agents": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "name": {"type": "string"},
-                                        "role": {"type": "string"},
-                                        "goal": {"type": "string"},
-                                        "description": {"type": "string"},
-                                        "backstory": {"type": "string"},
-                                        "skills": {"type": "array", "items": {"type": "string"}},
-                                        "communicationStyle": {"type": "string"},
-                                        "workingStyle": {"type": "string"},
-                                        "quirks": {"type": "array", "items": {"type": "string"}},
-                                        "autonomyLevel": {"type": "number"}
-                                    }
-                                }
-                            },
-                            "tasks": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "title": {"type": "string"},
-                                        "description": {"type": "string"},
-                                        "priority": {"type": "string"},
-                                        "assignee": {"type": "string"}
-                                    }
-                                }
-                            },
-                            "summary": {"type": "string"}
+                            "root_team_id": {"type": "string"},
+                            "structure": {"type": "string", "description": "Text description of team structure"}
+                        }
+                    },
+                    "overall_approach": {"type": "string"},
+                    "team_collaboration": {"type": "string"}
+                },
+                "required": ["teams"]
+            }
+            
+            # Create the JSON schema for agent profiles
+            agent_profiles_schema = {
+                "type": "object",
+                "properties": {
+                    "agents": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["role", "goal", "backstory", "tone", 
+                                         "learning_style", "working_style", "communication_style", "quirks"],
+                            "properties": {
+                                "name": {"type": "string"},
+                                "character_name": {"type": "string"},
+                                "role": {"type": "string"},
+                                "goal": {"type": "string"},
+                                "backstory": {"type": "string"},
+                                "tone": {"type": "string"},
+                                "learning_style": {"type": "string"},
+                                "working_style": {"type": "string"},
+                                "communication_style": {"type": "string"},
+                                "quirks": {"type": "array", "items": {"type": "string"}}
+                            }
                         }
                     }
+                },
+                "required": ["agents"]
+            }
+            
+            # Define the tools for each task
+            try:
+                # Try to import from crewai first
+                try:
+                    from crewai import StructuredJSONOutputTool, ExtractJSONTool
+                # If that fails, use our adapter tools
+                except ImportError:
+                    logger.info("Using StructuredJSONOutputTool from adapter")
+                    from crewai_adapter import StructuredJSONOutputTool, ExtractJSONTool
+                
+                # Use compatibility tool classes from adapter
+                logger.info("Using compatibility tools for CrewAI")
+                
+                # Import our robust tool implementations
+                try:
+                    from crewai_adapter import StructuredJSONOutputTool, ExtractJSONTool
+                    logger.info("Using enhanced tool classes from crewai_adapter")
+                except ImportError:
+                    # If import fails, create robust tool classes directly
+                    logger.warning("Failed to import tools from adapter, creating local versions")
                     
-                    # Create instances of the tools
-                    json_output_tool = StructuredJSONOutputTool(schema=team_schema)
-                    extract_json_tool = ExtractJSONTool()
+                    class ToolBase:
+                        """Simple base class for tools"""
+                        def __call__(self, *args, **kwargs):
+                            return self.function(*args, **kwargs) if hasattr(self, 'function') else None
+                            
+                        def invoke(self, input_str, **kwargs):
+                            """Required for newer CrewAI versions"""
+                            return self.function(input_str) if hasattr(self, 'function') else None
+                            
+                        def run(self, input_str, **kwargs):
+                            """For LangChain compatibility"""
+                            return self.function(input_str) if hasattr(self, 'function') else None
                     
-                    # Create a crew for the recruitment process with JSON tools
-                    recruitment_crew = Crew(
-                        agents=recruitment_agents,
-                        tasks=recruitment_tasks,
-                        verbose=True,
-                        process=Process.sequential,
-                        memory=True,
-                        tools=[json_output_tool, extract_json_tool]
+                    class StructuredJSONOutputTool(ToolBase):
+                        """Tool for generating structured JSON output"""
+                        def __init__(self, schema):
+                            self.schema = schema
+                            self.name = "structured_json_output"
+                            self.description = "Format output as JSON following schema"
+                            
+                            def format_json(text):
+                                """Format text as JSON according to schema."""
+                                try:
+                                    import json
+                                    return json.dumps(json.loads(text), indent=2)
+                                except Exception:
+                                    return text
+                                    
+                            self.function = format_json
+                    
+                    class ExtractJSONTool(ToolBase):
+                        """Tool for extracting JSON from text"""
+                        def __init__(self):
+                            self.name = "extract_json"
+                            self.description = "Extract JSON from text"
+                            
+                            def extract_json(text):
+                                """Extract JSON from text."""
+                                import json
+                                import re
+                                
+                                # Try to find JSON in code blocks
+                                json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+                                for match in re.findall(json_pattern, text):
+                                    try:
+                                        return json.dumps(json.loads(match), indent=2)
+                                    except:
+                                        pass
+                                
+                                # Try the whole text
+                                try:
+                                    return json.dumps(json.loads(text), indent=2)
+                                except:
+                                    return text
+                                    
+                            self.function = extract_json
+                    
+                    logger.info("Created comprehensive tool classes")
+                
+                # Create simple tool instances without extra parameters
+                logger.info("Creating tool instances with schema validation")
+                
+                # Create tools with only the required parameters
+                project_phases_tool = StructuredJSONOutputTool(schema=project_phases_schema)
+                team_structure_tool = StructuredJSONOutputTool(schema=team_structure_schema)
+                agent_profiles_tool = StructuredJSONOutputTool(schema=agent_profiles_schema)
+                extract_json_tool = ExtractJSONTool()
+                
+                # Add more tools for agent autonomy (files, knowledge access, etc.)
+                try:
+                    # Try to create additional tool types if possible
+                    additional_tools = []
+                    
+                    # Create a dictionary of all tools 
+                    all_tools = {
+                        "format_project_phases": project_phases_tool,
+                        "format_team_structure": team_structure_tool,
+                        "format_agent_profiles": agent_profiles_tool,
+                        "extract_json": extract_json_tool
+                    }
+                    
+                    # Optional: Add tools to agent directly if supported
+                    if hasattr(project_analyzer, 'tools') and isinstance(project_analyzer.tools, list):
+                        project_analyzer.tools.extend([project_phases_tool, extract_json_tool])
+                        logger.info(f"Added tools directly to agent {project_analyzer.role}")
+                    
+                    if hasattr(team_architect, 'tools') and isinstance(team_architect.tools, list):
+                        team_architect.tools.extend([team_structure_tool, extract_json_tool])
+                        logger.info(f"Added tools directly to agent {team_architect.role}")
+                        
+                    if hasattr(agent_designer, 'tools') and isinstance(agent_designer.tools, list):
+                        agent_designer.tools.extend([agent_profiles_tool, extract_json_tool])
+                        logger.info(f"Added tools directly to agent {agent_designer.role}")
+                except Exception as tool_err:
+                    logger.warning(f"Could not add tools directly to agents: {tool_err}")
+                
+                # Check if Task accepts tools parameter - but we'll use them regardless
+                import inspect
+                task_params = inspect.signature(Task.__init__).parameters
+                supports_tools = 'tools' in task_params
+                
+                # For maximum compatibility, define tool application through kwargs
+                def with_tools(task_kwargs, tools=None):
+                    """Add tools to task kwargs if supported"""
+                    if tools and supports_tools:
+                        task_kwargs["tools"] = tools
+                    return task_kwargs
+                
+                # Create a cleaner approach to task creation
+                try:
+                    # Create task arguments
+                    task1_args = {
+                        "description": f"Analyze the following project description and break it into logical phases: '{project_description}'. "
+                                      f"For each phase, provide: 1) A name, 2) Key objectives, 3) Required personality traits. "
+                                      f"IMPORTANT: Format your response as a valid JSON object with this structure: "
+                                      f"{{'phases': [{{name: string, objectives: string[], required_traits: string[]}}]}}",
+                        "agent": project_analyzer,
+                        "expected_output": "A JSON object with an array of project phases, each with name, objectives, and required personality traits.",
+                        "output_file": os.path.join(self.tribe_path, "project_phases.json")
+                    }
+                    
+                    task2_args = {
+                        "description": "Based on the project analysis, design an optimal team structure for Phase 1. "
+                                      "Design the team with specialized agents with complementary personality traits that cover all required traits. "
+                                      "Create as many agents as necessary and organize them into sub-teams as needed for different aspects of the project."
+                                      "\n\nIf you create a hierarchical team structure:"
+                                      "\n1. Assign unique IDs to each team and agent"
+                                      "\n2. Use parent_team_id to indicate sub-teams"
+                                      "\n3. Use is_team_lead and sub_team_id to identify team leaders and their teams"
+                                      "\n4. Describe the overall hierarchy in the team_hierarchy section"
+                                      "\n\nIMPORTANT: Format your response as a valid JSON object with a 'teams' array.",
+                        "agent": team_architect,
+                        "expected_output": "A JSON object describing the team structure with teams, sub-teams, roles, responsibilities, personality traits, and relationships between agents.",
+                        "output_file": os.path.join(self.tribe_path, "team_structure.json")
+                    }
+                    
+                    task3_args = {
+                        "description": "Create detailed profiles for each agent in the team. Each profile must include: "
+                                      "name, role, goal, backstory, tone, learning style, working style, "
+                                      "communication style, and 2-3 quirks that make the agent's personality distinctive. "
+                                      "\n\nIMPORTANT: Format your response as a valid JSON array of agent objects.",
+                        "agent": agent_designer,
+                        "expected_output": "A JSON array of agent profiles with all required fields.",
+                        "output_file": os.path.join(self.tribe_path, "agent_profiles.json")
+                    }
+                    
+                    # Add tools when supported
+                    if supports_tools:
+                        task1_args["tools"] = [project_phases_tool, extract_json_tool]
+                        task2_args["tools"] = [team_structure_tool, extract_json_tool]
+                        task3_args["tools"] = [agent_profiles_tool, extract_json_tool]
+                        logger.info("Added tools to all tasks")
+                    
+                    # Create tasks with the right arguments
+                    recruitment_tasks = [
+                        Task(**task1_args),
+                        Task(**task2_args),
+                        Task(**task3_args)
+                    ]
+                    
+                    logger.info(f"Created {len(recruitment_tasks)} tasks with {'tools' if supports_tools else 'no tools'}")
+                    
+                except Exception as e:
+                    logger.error(f"Error creating tasks: {e}")
+                    # Final fallback with minimal task parameters
+                    recruitment_tasks = [
+                        Task(
+                            description=f"Analyze the project description: '{project_description}' and create phases",
+                            agent=project_analyzer,
+                            expected_output="JSON phases data"
+                        ),
+                        Task(
+                            description="Design team structure for Phase 1",
+                            agent=team_architect,
+                            expected_output="JSON team structure"
+                        ),
+                        Task(
+                            description="Create detailed agent profiles",
+                            agent=agent_designer,
+                            expected_output="JSON agent profiles"
+                        )
+                    ]
+                    logger.warning("Using minimal fallback tasks due to error")
+                
+            except (ImportError, AttributeError) as e:
+                logger.error(f"Error creating structured output tasks: {str(e)}")
+                # Final fallback to extremely basic tasks without any tools
+                recruitment_tasks = [
+                    # Task 1: Analyze project and break into phases
+                    Task(
+                        description=f"Analyze the following project description and break it into logical phases: '{project_description}'. "
+                                   f"For each phase, provide: 1) A name, 2) Key objectives, 3) Required personality traits. "
+                                   f"IMPORTANT: Format your response as a JSON object.",
+                        agent=project_analyzer,
+                        expected_output="A JSON object with an array of project phases, each with name, objectives, and required personality traits."
+                    ),
+                    # Task 2: Design team structure for Phase 1
+                    Task(
+                        description="Based on the project analysis, design an optimal team structure for Phase 1. "
+                                   "Design the team with specialized agents with complementary personality traits. Create as many agents as necessary and organize them into sub-teams as needed for different aspects of the project."
+                                   "\n\nIf you create a hierarchical team structure:"
+                                   "\n1. Assign unique IDs to each team and agent"
+                                   "\n2. Indicate sub-teams and team leadership relationships"
+                                   "\n3. Describe how the teams will collaborate"
+                                   "\n\nIMPORTANT: Format your response as a JSON object.",
+                        agent=team_architect,
+                        expected_output="A JSON object describing the team structure with teams, sub-teams, roles, responsibilities, personality traits, and relationships between agents. Include a team hierarchy showing how teams relate to each other."
+                    ),
+                    # Task 3: Create detailed agent profiles
+                    Task(
+                        description="Create detailed profiles for each agent in the team. Each profile must include: "
+                                   "character name, role, goal, backstory, tone, learning style, working style, "
+                                   "communication style, and 2-3 quirks that make the agent's personality distinctive. "
+                                   "IMPORTANT: Format your response as a JSON array.",
+                        agent=agent_designer,
+                        expected_output="A JSON array of agent profiles with all required fields."
                     )
-                except (ImportError, AttributeError) as e:
-                    logger.error(f"Error creating JSON tools: {str(e)}")
-                    # Fall back to regular crew creation
-                    recruitment_crew = Crew(
-                        agents=recruitment_agents,
-                        tasks=recruitment_tasks,
-                        verbose=True,
-                        process=Process.sequential,
-                        memory=True,
-                    )
+                ]
+            
+            try:
+                # Create a crew with compatibility checks
+                import inspect
+                crew_params = inspect.signature(Crew.__init__).parameters
+                
+                # Base required parameters
+                crew_args = {
+                    "agents": recruitment_agents,
+                    "tasks": recruitment_tasks,
+                    "verbose": True,
+                }
+                
+                # Add optional parameters based on what's supported
+                if 'process' in crew_params:
+                    crew_args["process"] = Process.sequential
+                
+                if 'memory' in crew_params:
+                    crew_args["memory"] = True
+                
+                # Log what we're attempting to create
+                logger.info(f"Creating crew with args: {crew_args.keys()}")
+                
+                # Create the crew
+                recruitment_crew = Crew(**crew_args)
                 
                 # Store this temporary crew
                 self.crews[f"{crew_id}-recruitment"] = recruitment_crew
@@ -814,13 +1249,29 @@ class CrewAIServer:
 
                 # Create a simple Crew as a fallback
                 try:
-                    crew = Crew(
-                        agents=agents,
-                        tasks=tasks,
-                        verbose=True,
-                        process=Process.sequential,
-                        memory=True,
-                    )
+                    # Check supported parameters
+                    import inspect
+                    crew_params = inspect.signature(Crew.__init__).parameters
+                    
+                    # Basic parameters that all versions should support
+                    crew_args = {
+                        "agents": agents,
+                        "tasks": tasks,
+                        "verbose": True
+                    }
+                    
+                    # Add optional parameters if supported
+                    if 'process' in crew_params:
+                        crew_args["process"] = Process.sequential
+                    
+                    if 'memory' in crew_params:
+                        crew_args["memory"] = True
+                    
+                    # Log attempts    
+                    logger.info(f"Creating fallback crew with args: {crew_args.keys()}")
+                    
+                    # Create the minimal crew
+                    crew = Crew(**crew_args)
 
                     # Store the crew
                     self.crews[crew_id] = crew
@@ -1455,113 +1906,111 @@ class CrewAIServer:
 
             # Try to process the message with error handling
             try:
-                # Try to create a StructuredJSONOutputTool if the message mentions JSON
-                tools = []
+                # Check if the message might need structured JSON output
+                need_json_structure = ('json' in message.lower() or 
+                                      'team' in message.lower() or 
+                                      'format' in message.lower() or
+                                      'output' in message.lower() or
+                                      'structure' in message.lower())
                 
-                try:
-                    # Check if the message mentions JSON or team creation
-                    if ('json' in message.lower() or 
-                        'team' in message.lower() or 
-                        'format' in message.lower() or
-                        'output' in message.lower() or
-                        'structure' in message.lower()):
-                        
-                        logger.info("Message likely needs structured output - attempting to add JSON tools")
-                        
+                if need_json_structure:
+                    logger.info("Message likely needs structured output - attempting to add JSON tools")
+                    
+                    try:
+                        # Try to import from crewai first
                         try:
-                            # First try to import the tools
                             from crewai import StructuredJSONOutputTool, ExtractJSONTool
-                            
-                            # Look for any JSON schema hints in the message
-                            import re
-                            schema_hints = re.findall(r'\{[^{}]*\}', message)
-                            
-                            if schema_hints:
-                                # Try to parse any JSON schema fragments
-                                logger.info(f"Found potential schema hint: {schema_hints[0]}")
-                                
-                                # Determine if we need agents/tasks schema
-                                team_schema = False
-                                if ('agent' in message.lower() or 
-                                   'team' in message.lower() or
-                                   'task' in message.lower()):
-                                    team_schema = True
-                            
-                            # Create appropriate tools
-                            if team_schema:
-                                # Use the team schema (same as in _create_bootstrap_team)
-                                schema = {
-                                    "type": "object",
-                                    "properties": {
-                                        "agents": {
-                                            "type": "array",
-                                            "items": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "name": {"type": "string"},
-                                                    "role": {"type": "string"},
-                                                    "goal": {"type": "string"},
-                                                    "description": {"type": "string"},
-                                                    "backstory": {"type": "string"},
-                                                    "skills": {"type": "array", "items": {"type": "string"}},
-                                                    "communicationStyle": {"type": "string"},
-                                                    "workingStyle": {"type": "string"},
-                                                    "quirks": {"type": "array", "items": {"type": "string"}},
-                                                    "autonomyLevel": {"type": "number"}
-                                                }
+                        except ImportError:
+                            logger.info("Using StructuredJSONOutputTool from adapter for messaging")
+                            from crewai_adapter import StructuredJSONOutputTool, ExtractJSONTool
+                        
+                        # Determine the appropriate schema based on message content
+                        import re
+                        
+                        # Look for any JSON schema hints in the message
+                        schema_hints = re.findall(r'\{[^{}]*\}', message)
+                        
+                        # Default generic schema
+                        schema = {
+                            "type": "object",
+                            "additionalProperties": True
+                        }
+                        
+                        # Determine the schema type based on message content
+                        team_schema = False
+                        if ('agent' in message.lower() or 
+                           'team' in message.lower() or
+                           'task' in message.lower()):
+                            team_schema = True
+                        
+                        # Create appropriate schema
+                        if team_schema:
+                            # Use agent/team schema
+                            schema = {
+                                "type": "object",
+                                "properties": {
+                                    "agents": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "required": ["name", "role", "goal"],
+                                            "properties": {
+                                                "name": {"type": "string"},
+                                                "role": {"type": "string"},
+                                                "goal": {"type": "string"},
+                                                "backstory": {"type": "string"},
+                                                "traits": {"type": "array", "items": {"type": "string"}},
+                                                "communication_style": {"type": "string"},
+                                                "working_style": {"type": "string"},
+                                                "quirks": {"type": "array", "items": {"type": "string"}}
                                             }
-                                        },
-                                        "tasks": {
-                                            "type": "array",
-                                            "items": {
-                                                "type": "object",
-                                                "properties": {
-                                                    "title": {"type": "string"},
-                                                    "description": {"type": "string"},
-                                                    "priority": {"type": "string"},
-                                                    "assignee": {"type": "string"}
-                                                }
+                                        }
+                                    },
+                                    "tasks": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "required": ["title", "description"],
+                                            "properties": {
+                                                "title": {"type": "string"},
+                                                "description": {"type": "string"},
+                                                "priority": {"type": "string"},
+                                                "assignee": {"type": "string"}
                                             }
-                                        },
-                                        "summary": {"type": "string"}
-                                    }
+                                        }
+                                    },
+                                    "summary": {"type": "string"}
                                 }
-                                logger.info("Using team schema for structured output")
-                            else:
-                                # Use a generic JSON schema
-                                schema = {
-                                    "type": "object",
-                                    "additionalProperties": True
-                                }
-                                logger.info("Using generic schema for structured output")
-                                
-                            # Create the tools
-                            json_output_tool = StructuredJSONOutputTool(schema=schema)
-                            extract_json_tool = ExtractJSONTool()
+                            }
+                            logger.info("Using team schema for structured output")
                             
-                            # Add tools to the list
-                            tools = [json_output_tool, extract_json_tool]
-                            
-                            # Modify the task description to explicitly use the tool
-                            task.description = f"{task.description}\n\nIMPORTANT: You MUST use the structured_json_output tool to ensure your response is properly formatted as JSON."
-                            
-                            logger.info("Successfully added JSON tools to the agent")
-                            
-                        except Exception as tool_error:
-                            logger.error(f"Error creating structured output tools: {tool_error}")
-                            # Continue without the tools
-                            
-                except Exception as check_error:
-                    logger.error(f"Error checking for JSON needs: {check_error}")
-                    # Continue without the tools
+                        # Create the JSON tools
+                        json_output_tool = StructuredJSONOutputTool(schema=schema)
+                        extract_json_tool = ExtractJSONTool()
+                        
+                        # Add tools directly to the task instead of the crew
+                        task.tools = [json_output_tool, extract_json_tool]
+                        
+                        # Modify the task description to provide better guidance
+                        task.description = (
+                            f"{task.description}\n\n"
+                            f"Please use the structured_json_output tool to format your response "
+                            f"as a properly structured JSON object that conforms to the schema requirements."
+                        )
+                        
+                        logger.info("Successfully added JSON tools to the task")
+                        
+                    except Exception as tool_error:
+                        logger.error(f"Error creating structured output tools: {tool_error}")
+                        # Continue without tools on error
                 
-                # Create a temporary crew with just this agent and task (and optional tools)
+                # Create a temporary crew with just this agent and task
+                # Tools are now attached directly to the task, following task-based approach
                 temp_crew = Crew(
                     agents=[agent],
                     tasks=[task],
                     verbose=True,
-                    process=Process.sequential,
-                    tools=tools if tools else None
+                    process=Process.sequential
                 )
 
                 # Run the crew to get the response

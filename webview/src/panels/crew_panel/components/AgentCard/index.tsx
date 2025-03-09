@@ -33,8 +33,17 @@ interface AgentCardProps {
     messages?: Message[];
     loadingAgent?: string;
     onDirectMessage?: (agentId: string) => void;
-    teams?: Array<{ id: string; name: string; members: string[] }>;
+    teams?: Array<{ 
+        id: string; 
+        name: string; 
+        description?: string;
+        members: string[] | Array<{ id: string; role?: string }>;
+        parentTeamId?: string;
+        subTeams?: string[];
+        dynamicallyCreated?: boolean;
+    }>;
     tasks?: Array<{ id: string; title: string; assignedTo: string; status: string }>;
+    onCreateTeam?: (agentId: string, teamName: string) => void;
 }
 
 export const AgentCard: React.FC<AgentCardProps> = ({
@@ -53,7 +62,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({
     loadingAgent,
     onDirectMessage,
     teams = [],
-    tasks = []
+    tasks = [],
+    onCreateTeam
 }) => {
     const [showAutonomyPanel, setShowAutonomyPanel] = useState(false);
     const [showDirectChat, setShowDirectChat] = useState(false);
@@ -64,6 +74,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({
     const [showTeams, setShowTeams] = useState(false);
     const [showTasks, setShowTasks] = useState(false);
     const [showLearning, setShowLearning] = useState(false);
+    const [showCreateTeamForm, setShowCreateTeamForm] = useState(false);
+    const [newTeamName, setNewTeamName] = useState("");
     const [selectedAutonomyLevel, setSelectedAutonomyLevel] = useState<string>(
         agent.autonomyState?.level.level || 'MEDIUM'
     );
@@ -78,6 +90,15 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         description: agent.description || '',
         short_description: agent.short_description || agent.description || '',
         tools: agent.tools || [],
+        traits: agent.traits || [],
+        quirks: agent.quirks || [],
+        tone: agent.tone || 'Professional',
+        learning_style: agent.learning_style || 'Analytical',
+        working_style: agent.working_style || 'Methodical',
+        communication_style: agent.communication_style || 'Clear and concise',
+        teams: agent.teams || [],
+        leadsTeams: agent.leadsTeams || [],
+        canCreateSubTeams: agent.canCreateSubTeams !== undefined ? agent.canCreateSubTeams : true,
         performanceMetrics: agent.performanceMetrics || null,
         autonomyState: agent.autonomyState || {
             level: AUTONOMY_LEVELS.find(l => l.level === 'MEDIUM') || AUTONOMY_LEVELS[2],
@@ -229,6 +250,28 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             }
         });
     };
+    
+    // Handle creating a new team
+    const handleCreateTeam = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (newTeamName.trim() && onCreateTeam) {
+            onCreateTeam(safeAgent.id, newTeamName.trim());
+            
+            // Notify the extension about team creation
+            vscode.postMessage({
+                type: 'CREATE_TEAM',
+                payload: {
+                    agentId: safeAgent.id,
+                    teamName: newTeamName.trim(),
+                    dynamicallyCreated: true
+                }
+            });
+            
+            // Reset form
+            setNewTeamName('');
+            setShowCreateTeamForm(false);
+        }
+    };
 
     const handleClearMessages = (e: React.MouseEvent) => {
         e.stopPropagation();
@@ -289,7 +332,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
     }, [messages, safeAgent.id]);
 
     // Get agent's teams
-    const agentTeams = teams.filter(team => team.members.includes(safeAgent.id));
+    const agentTeams = teams.filter(team => Array.isArray(team.members) && team.members.some(m => typeof m === 'string' ? m === safeAgent.id : m.id === safeAgent.id));
     
     // Get agent's tasks
     const agentTasks = tasks.filter(task => task.assignedTo === safeAgent.id);
@@ -471,15 +514,111 @@ export const AgentCard: React.FC<AgentCardProps> = ({
                             <div className="agent-section-content">
                                 {agentTeams.length > 0 ? (
                                     <div className="teams-list">
-                                        {agentTeams.map(team => (
-                                            <div key={team.id} className="team-item">
-                                                {team.name}
-                                                <span className="team-members">{team.members.length} members</span>
-                                            </div>
-                                        ))}
+                                        {agentTeams.map(team => {
+                                            // Get parent team name if this is a sub-team
+                                            const parentTeam = team.parentTeamId ? 
+                                                teams.find(t => t.id === team.parentTeamId) : null;
+                                            
+                                            // Get sub-teams if this agent leads a team
+                                            const subTeams = team.subTeams ? 
+                                                teams.filter(t => team.subTeams?.includes(t.id)) : [];
+                                            
+                                            // Check if this agent is a team lead
+                                            const isTeamLead = safeAgent.leadsTeams?.includes(team.id) || 
+                                                ((team as any).managerId === safeAgent.id);
+                                            
+                                            // Determine how many members are in the team
+                                            const memberCount = Array.isArray(team.members) ? 
+                                                (typeof team.members[0] === 'string' ? 
+                                                    team.members.length : 
+                                                    (team.members as any[]).length) : 
+                                                0;
+                                            
+                                            return (
+                                                <div key={team.id} className={`team-item ${isTeamLead ? 'team-lead' : ''} ${team.dynamicallyCreated ? 'dynamic-team' : ''}`}>
+                                                    <div className="team-header">
+                                                        <div className="team-name">
+                                                            {team.name}
+                                                            {isTeamLead && <span className="team-lead-badge">Lead</span>}
+                                                            {team.dynamicallyCreated && <span className="dynamic-badge">Dynamic</span>}
+                                                        </div>
+                                                        <span className="team-members">{memberCount} members</span>
+                                                    </div>
+                                                    
+                                                    {parentTeam && (
+                                                        <div className="team-parent">
+                                                            <span>Sub-team of: {parentTeam.name}</span>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {subTeams.length > 0 && (
+                                                        <div className="team-subteams">
+                                                            <span>Sub-teams: {subTeams.map(st => st.name).join(', ')}</span>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {isTeamLead && safeAgent.canCreateSubTeams && (
+                                                        <button 
+                                                            className="create-subteam-button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                vscode.postMessage({
+                                                                    type: 'CREATE_SUBTEAM',
+                                                                    payload: {
+                                                                        agentId: safeAgent.id,
+                                                                        parentTeamId: team.id
+                                                                    }
+                                                                });
+                                                            }}
+                                                        >
+                                                            Create Sub-team
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 ) : (
                                     <p className="empty-state">Not assigned to any teams</p>
+                                )}
+                                
+                                {safeAgent.canCreateSubTeams && (
+                                    <div className="create-team-section">
+                                        {showCreateTeamForm ? (
+                                            <form onSubmit={handleCreateTeam}>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Team name"
+                                                    value={newTeamName}
+                                                    onChange={(e) => setNewTeamName(e.target.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                                <div className="form-actions">
+                                                    <button type="submit">Create</button>
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setShowCreateTeamForm(false);
+                                                            setNewTeamName('');
+                                                        }}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </form>
+                                        ) : (
+                                            <button
+                                                className="create-team-button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setShowCreateTeamForm(true);
+                                                }}
+                                            >
+                                                Create New Team
+                                            </button>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         )}

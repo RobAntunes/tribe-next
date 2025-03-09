@@ -11,9 +11,13 @@
 # Required packages
 pygls
 packaging
+jsonschema>=4.17.3
 
 # MightyDev packages
 crewai
 langchain>=0.1.0
 openai>=1.0.0
 anthropic>=0.8.0
+
+# For compatibility with Pydantic v2
+pydantic>=2.5.0

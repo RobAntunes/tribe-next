@@ -771,7 +771,7 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 				role: agent.role,
 				description: agent.description,
 				backstory: agent.backstory,
-				skills: agent.skills || [],
+				skills: (agent as any).skills || [],
 				tools: agent.tools || []
 			} : undefined)
 		};
@@ -861,7 +861,7 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 					role: targetAgent.role,
 					description: targetAgent.description,
 					backstory: targetAgent.backstory,
-					skills: targetAgent.skills,
+					skills: (targetAgent as any).skills,
 					tools: targetAgent.tools
 				} : null,
 				// Specify if this is for all agents

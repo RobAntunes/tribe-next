@@ -29,14 +29,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger("crewai_adapter")
 
+# Utility function to ensure result is always a string when CrewAI needs it
+def ensure_string_output(result):
+    """Convert dictionary results to strings for compatibility with CrewAI validation"""
+    # CrewAI sometimes requires strings for TaskOutput validation
+    if isinstance(result, (dict, list)):
+        try:
+            import json
+            return json.dumps(result, indent=2)
+        except Exception:
+            return str(result)
+    elif result is None:
+        return ""
+    
+    return result
+
 # Add potential virtual environment paths to Python path
 venv_paths = [
     # Custom crewai_venv for Python 3.13
     Path(__file__).parent.parent.parent / "crewai_venv" / "lib" / "python3.13" / "site-packages",
     # Custom crewai_venv for Python 3.10
     Path(__file__).parent.parent.parent / "crewai_venv" / "lib" / "python3.10" / "site-packages",
-    # Default .venv
-    Path(__file__).parent.parent.parent / ".venv" / "lib" / "python3.10" / "site-packages",
 ]
 
 # Add all existing venv paths to sys.path
@@ -144,45 +157,78 @@ try:
                      goal: str, 
                      backstory: str, 
                      name: str = None,
-                     character_name: str = None,
+                     character_name: str = None,  # Keep for backward compatibility
                      tone: str = None,
                      learning_style: str = None,
                      working_style: str = None,
                      communication_style: str = None,
+                     traits: List[str] = None,
                      quirks: List[str] = None,
                      metadata: Dict[str, Any] = None,
                      **kwargs):
-            # Initialize the base Agent
+            # Use character_name as a fallback for name to maintain compatibility
+            name_to_use = name or character_name or role
+            
+            # Initialize the base Agent without passing name parameter
+            # This avoids issues with older versions that don't accept name
             super().__init__(role=role, goal=goal, backstory=backstory, **kwargs)
             
-            # Store extended properties
-            self.character_name = character_name or name or role
-            self.tone = tone or "Professional"
-            self.learning_style = learning_style or "Analytical"
-            self.working_style = working_style or "Methodical"
-            self.communication_style = communication_style or "Clear and concise"
-            self.quirks = quirks or []
-            self.metadata = metadata or {}
+            # Store all our properties in the agent's __dict__ to avoid attribute errors
+            agent_dict = self.__dict__
+            agent_dict['_name'] = name_to_use  # Use _name instead of name to avoid conflicts
+            agent_dict['tone'] = tone or "Professional"
+            agent_dict['learning_style'] = learning_style or "Analytical"
+            agent_dict['working_style'] = working_style or "Methodical"
+            agent_dict['communication_style'] = communication_style or "Clear and concise"
+            agent_dict['traits'] = traits or []
+            agent_dict['quirks'] = quirks or []
+            
+            # Ensure metadata exists
+            if metadata:
+                agent_dict['metadata'] = metadata
+            elif not hasattr(self, 'metadata') or not self.metadata:
+                agent_dict['metadata'] = {}
+            
+            # Always add name to metadata for retrieval
+            if isinstance(agent_dict.get('metadata', {}), dict):
+                agent_dict['metadata']['name'] = name_to_use
+                agent_dict['metadata']['character_name'] = name_to_use  # For backward compatibility
             
             # Add stylistic information to system prompt if not provided explicitly
-            if self.system_template is None:
+            if not hasattr(self, 'system_template') or self.system_template is None:
                 self._add_personality_to_prompt()
+                
+        @property
+        def name(self):
+            """Safe property to get name from various places"""
+            if hasattr(self, '_name') and self._name:
+                return self._name
+            if hasattr(self, 'metadata') and isinstance(self.metadata, dict) and 'name' in self.metadata:
+                return self.metadata['name']
+            if hasattr(self, 'metadata') and isinstance(self.metadata, dict) and 'character_name' in self.metadata:
+                return self.metadata['character_name']
+            return self.role
 
         def _add_personality_to_prompt(self):
             """Add personality metadata to the agent's system prompt"""
             if hasattr(self, "system_prompt"):
-                # Add personality section at the end of the system prompt
+                # Use the name property which safely gets the name from any location
                 personality_section = f"""
                 
 # Character Information
-You are {self.character_name}, a {self.role}. You communicate in a {self.tone} tone with a {self.communication_style} communication style.
+You are {self.name}, a {self.role}. You communicate in a {self.tone} tone with a {self.communication_style} communication style.
 Your learning style is {self.learning_style} and you work in a {self.working_style} manner.
 """
+                
+                # Add personality traits if any
+                if self.traits:
+                    traits_text = ", ".join(self.traits)
+                    personality_section += f"\nYour personality traits include: {traits_text}. These are inherent aspects of your character."
                 
                 # Add quirks if any
                 if self.quirks:
                     quirks_text = ", ".join(self.quirks)
-                    personality_section += f"\nYou have the following quirks: {quirks_text}. These may subtly influence your communication style."
+                    personality_section += f"\nYou have the following quirks: {quirks_text}. These are unique qualities that make you distinctive."
                 
                 # Update the system prompt
                 if isinstance(self.system_prompt, str):
@@ -190,11 +236,13 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
         
         def to_dict(self) -> Dict[str, Any]:
             """Convert agent to a serializable dictionary"""
-            # Get base class attributes
+            # Get base class attributes (using our name property)
             base_attrs = {
                 "role": self.role,
                 "goal": self.goal,
                 "backstory": self.backstory,
+                "name": self.name,  # Use the name property which safely gets from anywhere
+                "character_name": self.name,  # Add for backward compatibility
             }
             
             # Add CrewAI 0.102.0+ attributes
@@ -204,11 +252,11 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
             
             # Add extended attributes
             extended_attrs = {
-                "character_name": self.character_name,
                 "tone": self.tone,
                 "learning_style": self.learning_style,
                 "working_style": self.working_style,
                 "communication_style": self.communication_style,
+                "traits": self.traits,
                 "quirks": self.quirks,
                 "metadata": self.metadata
             }
@@ -334,7 +382,9 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
     class StructuredJSONOutputTool(Tool):
         """
         Tool for enforcing a specific JSON output schema from models
-        that don't natively support structured outputs
+        that don't natively support structured outputs.
+        
+        This implementation aligns with CLAUDE.md section 3.8 for structured output tools.
         """
         def __init__(self, schema: Dict[str, Any]):
             def structured_json_output(input_str: str) -> Dict[str, Any]:
@@ -352,6 +402,14 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
                     import re
                     import json
                     
+                    # Try to import jsonschema for validation, fallback to simple validation if not available
+                    try:
+                        import jsonschema
+                        have_jsonschema = True
+                    except ImportError:
+                        have_jsonschema = False
+                        logger.warning("jsonschema package not available, will use basic validation")
+                    
                     # Look for JSON blocks in the content
                     json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
                     json_matches = re.findall(json_pattern, input_str)
@@ -361,16 +419,70 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
                         for json_str in json_matches:
                             try:
                                 data = json.loads(json_str)
-                                # TODO: Validate against schema
-                                return data
+                                # Validate against schema if provided
+                                if schema:
+                                    if have_jsonschema:
+                                        try:
+                                            jsonschema.validate(instance=data, schema=schema)
+                                            return data
+                                        except jsonschema.exceptions.ValidationError as ve:
+                                            # If validation fails, try the next match
+                                            continue
+                                    else:
+                                        # Basic validation - just check required fields are present
+                                        if "required" in schema and isinstance(schema["required"], list):
+                                            missing_fields = [field for field in schema["required"] if field not in data]
+                                            if missing_fields:
+                                                # Missing required fields, try the next match
+                                                continue
+                                        # If we have properties with required fields, check those too
+                                        if "properties" in schema and isinstance(schema["properties"], dict):
+                                            invalid = False
+                                            for prop_name, prop_schema in schema["properties"].items():
+                                                if prop_name in data and "required" in prop_schema and isinstance(prop_schema["required"], list):
+                                                    if not isinstance(data[prop_name], dict):
+                                                        invalid = True
+                                                        break
+                                                    missing_fields = [field for field in prop_schema["required"] if field not in data[prop_name]]
+                                                    if missing_fields:
+                                                        invalid = True
+                                                        break
+                                            if invalid:
+                                                continue
+                                        return data
+                                else:
+                                    return data
                             except json.JSONDecodeError:
                                 continue
                     
                     # If no JSON blocks or none are valid, try the whole string
                     try:
                         data = json.loads(input_str)
-                        # TODO: Validate against schema
-                        return data
+                        # Validate against schema if provided
+                        if schema:
+                            if have_jsonschema:
+                                try:
+                                    jsonschema.validate(instance=data, schema=schema)
+                                    return data
+                                except jsonschema.exceptions.ValidationError as ve:
+                                    # If validation fails but we have data, include the error
+                                    return {
+                                        "error": f"JSON validation failed: {str(ve)}",
+                                        "invalid_data": data
+                                    }
+                            else:
+                                # Basic validation - just check required fields are present
+                                if "required" in schema and isinstance(schema["required"], list):
+                                    missing_fields = [field for field in schema["required"] if field not in data]
+                                    if missing_fields:
+                                        return {
+                                            "error": f"JSON validation failed: Missing required fields: {', '.join(missing_fields)}",
+                                            "invalid_data": data
+                                        }
+                                # If basic validation passes, return the data
+                                return data
+                        else:
+                            return data
                     except json.JSONDecodeError:
                         # As a last resort, try to extract JSON-like patterns
                         json_like_pattern = r'{[\s\S]*}'
@@ -378,8 +490,31 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
                         if match:
                             try:
                                 data = json.loads(match.group(0))
-                                # TODO: Validate against schema
-                                return data
+                                # Validate against schema if provided
+                                if schema:
+                                    if have_jsonschema:
+                                        try:
+                                            jsonschema.validate(instance=data, schema=schema)
+                                            return data
+                                        except jsonschema.exceptions.ValidationError as ve:
+                                            # If validation fails but we have data, include the error
+                                            return {
+                                                "error": f"JSON validation failed: {str(ve)}",
+                                                "invalid_data": data
+                                            }
+                                    else:
+                                        # Basic validation - just check required fields are present
+                                        if "required" in schema and isinstance(schema["required"], list):
+                                            missing_fields = [field for field in schema["required"] if field not in data]
+                                            if missing_fields:
+                                                return {
+                                                    "error": f"JSON validation failed: Missing required fields: {', '.join(missing_fields)}",
+                                                    "invalid_data": data
+                                                }
+                                        # If basic validation passes, return the data
+                                        return data
+                                else:
+                                    return data
                             except json.JSONDecodeError:
                                 pass
                     
@@ -395,13 +530,94 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
                         "input": input_str
                     }
             
+            description = (
+                f"Enforces that output follows a specific JSON schema. Use this tool to format your response as properly structured JSON.\n\n"
+                f"Schema: {json.dumps(schema, indent=2)}\n\n"
+                "Usage: Call this tool with your content and it will convert it to a properly formatted JSON object that matches the required schema."
+            )
+            
             super().__init__(
                 name="structured_json_output",
-                description=f"Enforces that output follows a specific JSON schema: {json.dumps(schema, indent=2)}",
+                description=description,
                 func=structured_json_output
             )
             
             self.schema = schema
+            
+        def invoke(self, input_str: str = None, **kwargs) -> Union[Dict[str, Any], str]:
+            """
+            Invoke the tool on the given input string.
+            This method makes the tool compatible with newer CrewAI versions.
+            
+            Args:
+                input_str: The input string to process (optional)
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                The structured JSON output or string
+            """
+            # Handle case where input_str is not provided or empty
+            if input_str is None or input_str == "":
+                # Try to get input from kwargs
+                if "input" in kwargs:
+                    input_str = kwargs["input"]
+                elif "query" in kwargs:
+                    input_str = kwargs["query"]
+                elif "text" in kwargs:
+                    input_str = kwargs["text"]
+                elif "content" in kwargs:
+                    input_str = kwargs["content"]
+                elif len(kwargs) > 0:
+                    # Try to use the first kwargs value
+                    input_str = next(iter(kwargs.values()))
+                else:
+                    # Fallback to empty string if no input is provided
+                    input_str = "{}"
+            
+            # If input_str is already a dict, convert it to JSON string
+            if isinstance(input_str, (dict, list)):
+                try:
+                    import json
+                    input_str = json.dumps(input_str)
+                except Exception:
+                    input_str = str(input_str)
+            
+            # Get the result
+            result = self.func(input_str)
+            
+            # Use the common utility to ensure consistent string output
+            return ensure_string_output(result)
+            
+        def result_as_answer(self, result: Dict[str, Any]) -> str:
+            """
+            Format the result as a user-friendly answer.
+            
+            Args:
+                result: The result from the tool invocation
+                
+            Returns:
+                A string representation of the result
+            """
+            try:
+                import json
+                return json.dumps(result, indent=2)
+            except Exception:
+                return str(result)
+                
+        def run(self, input_str: str = None, **kwargs) -> Union[Dict[str, Any], str]:
+            """
+            Run method for LangChain compatibility.
+            
+            Args:
+                input_str: The input string to process (optional)
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                The structured JSON output or string
+            """
+            # Get result using invoke and ensure it's a string if needed
+            result = self.invoke(input_str, **kwargs)
+            return ensure_string_output(result)
     
     class ExtractJSONTool(Tool):
         """
@@ -461,9 +677,84 @@ Your learning style is {self.learning_style} and you work in a {self.working_sty
             
             super().__init__(
                 name="extract_json",
-                description="Extracts and validates JSON from text input",
+                description="Extracts and validates JSON from text input. Use this tool when you need to extract JSON data from a text response.",
                 func=extract_json
             )
+            
+        def invoke(self, input_str: str = None, **kwargs) -> Union[Dict[str, Any], str]:
+            """
+            Invoke the tool on the given input string.
+            This method makes the tool compatible with newer CrewAI versions.
+            
+            Args:
+                input_str: The input string to process (optional)
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                The extracted JSON data or string
+            """
+            # Handle case where input_str is not provided or empty
+            if input_str is None or input_str == "":
+                # Try to get input from kwargs
+                if "input" in kwargs:
+                    input_str = kwargs["input"]
+                elif "query" in kwargs:
+                    input_str = kwargs["query"]
+                elif "text" in kwargs:
+                    input_str = kwargs["text"]
+                elif "content" in kwargs:
+                    input_str = kwargs["content"]
+                elif len(kwargs) > 0:
+                    # Try to use the first kwargs value
+                    input_str = next(iter(kwargs.values()))
+                else:
+                    # Fallback to empty string if no input is provided
+                    input_str = "{}"
+            
+            # If input_str is already a dict, convert it to JSON string
+            if isinstance(input_str, (dict, list)):
+                try:
+                    import json
+                    input_str = json.dumps(input_str)
+                except Exception:
+                    input_str = str(input_str)
+            
+            # Get the result
+            result = self.func(input_str)
+            
+            # Use the common utility to ensure consistent string output
+            return ensure_string_output(result)
+            
+        def result_as_answer(self, result: Dict[str, Any]) -> str:
+            """
+            Format the result as a user-friendly answer.
+            
+            Args:
+                result: The result from the tool invocation
+                
+            Returns:
+                A string representation of the result
+            """
+            try:
+                import json
+                return json.dumps(result, indent=2)
+            except Exception:
+                return str(result)
+                
+        def run(self, input_str: str = None, **kwargs) -> Union[Dict[str, Any], str]:
+            """
+            Run method for LangChain compatibility.
+            
+            Args:
+                input_str: The input string to process (optional)
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                The extracted JSON data or string
+            """
+            # Get result using invoke and ensure it's a string if needed
+            result = self.invoke(input_str, **kwargs)
+            return ensure_string_output(result)
     
     # Register extended classes
     setattr(crewai, "ExtendedAgent", ExtendedAgent)
@@ -506,27 +797,326 @@ except ImportError as e:
     class Process:
         sequential = "sequential"
         hierarchical = "hierarchical"
+        
+    # Create robust tool classes for maximum compatibility
+    try:
+        # First try importing pydantic for modern CrewAI versions
+        from pydantic import BaseModel, Field, create_model
+        from typing import Dict, Any, Callable, List, Union, Optional
+        import json
+        
+        # Create a robust base tool that works with modern CrewAI
+        class BaseTool(BaseModel):
+            """Base tool class fully compatible with newer CrewAI versions."""
+            name: str
+            description: str
+            function: Callable
+            
+            def __call__(self, *args, **kwargs):
+                return self.function(*args, **kwargs)
+                
+            # Add dict conversion for older CrewAI versions
+            def __dict__(self):
+                return {"name": self.name, "description": self.description}
+                
+            # Make object serializable
+            def __json__(self):
+                return {"name": self.name, "description": self.description}
+                
+            # Add this for compatibility with langchain tools
+            def to_langchain(self):
+                try:
+                    from langchain.tools import BaseTool as LangchainBaseTool
+                    
+                    class CompatTool(LangchainBaseTool):
+                        name = self.name
+                        description = self.description
+                        
+                        def _run(self, input_str):
+                            return self.function(input_str)
+                    
+                    return CompatTool()
+                except ImportError:
+                    return self
+    except ImportError:
+        # Fallback simple tool implementation without pydantic
+        class BaseTool:
+            """Simple BaseTool implementation for older versions."""
+            def __init__(self, name, description, function):
+                self.name = name
+                self.description = description
+                self.function = function
+                
+            def __call__(self, *args, **kwargs):
+                return self.function(*args, **kwargs)
+                
+            def __dict__(self):
+                return {"name": self.name, "description": self.description}
+                
+            def __str__(self):
+                return f"{self.name}: {self.description}"
+    
+    # Simplified StructuredJSONOutputTool implementation that only takes schema
+    class StructuredJSONOutputTool:
+        """Simple compatibility version of the StructuredJSONOutputTool."""
+        def __init__(self, schema):
+            # Only take the schema parameter
+            self.schema = schema
+            
+            # Use fixed name/description to avoid compatibility issues
+            # These are not passed as constructor arguments!
+            self.name = "structured_json_output"
+            self.description = f"Format output as JSON following schema"
+            
+            def format_json(text):
+                """Format text as JSON according to schema."""
+                try:
+                    import json
+                    import re
+                    
+                    # Try to extract existing JSON first
+                    json_matches = re.findall(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+                    if json_matches:
+                        for potential_json in json_matches:
+                            try:
+                                parsed = json.loads(potential_json)
+                                return json.dumps(parsed, indent=2)
+                            except:
+                                continue
+                    
+                    # Try the whole text as JSON
+                    try:
+                        parsed = json.loads(text)
+                        return json.dumps(parsed, indent=2)
+                    except:
+                        pass
+                        
+                    # Just return text if above fails
+                    return text
+                except Exception:
+                    return text
+            
+            # Store the function
+            self.function = format_json
+        
+        def __call__(self, *args, **kwargs):
+            return self.function(*args, **kwargs)
+        
+        # Add invoke method for newer CrewAI versions
+        def invoke(self, input_str=None, **kwargs):
+            """Required for compatibility with newer CrewAI versions"""
+            # Handle case where input_str is not provided or empty
+            if input_str is None or input_str == "":
+                # Try to get input from kwargs
+                if "input" in kwargs:
+                    input_str = kwargs["input"]
+                elif "query" in kwargs:
+                    input_str = kwargs["query"]
+                elif "text" in kwargs:
+                    input_str = kwargs["text"]
+                elif "content" in kwargs:
+                    input_str = kwargs["content"]
+                elif len(kwargs) > 0:
+                    # Try to use the first kwargs value
+                    input_str = next(iter(kwargs.values()))
+                else:
+                    # Fallback to empty string if no input is provided
+                    input_str = "{}"
+            
+            # If input_str is already a dict, convert it to JSON string
+            if isinstance(input_str, (dict, list)):
+                try:
+                    import json
+                    input_str = json.dumps(input_str)
+                except Exception:
+                    input_str = str(input_str)
+            
+            # Get the result
+            result = self.function(input_str)
+            
+            # Use the common utility to ensure consistent string output
+            return ensure_string_output(result)
+        
+        # Add result_as_answer method for newer CrewAI versions
+        def result_as_answer(self, result):
+            """Format result as a user-friendly answer"""
+            try:
+                import json
+                if isinstance(result, (dict, list)):
+                    return json.dumps(result, indent=2)
+                return str(result)
+            except Exception:
+                return str(result)
+        
+        # Add run method for LangChain compatibility
+        def run(self, input_str=None, **kwargs):
+            """For LangChain compatibility"""
+            # Get result using invoke and ensure it's a string if needed
+            result = self.invoke(input_str, **kwargs)
+            return ensure_string_output(result)
+            
+        def __dict__(self):
+            return {"schema": self.schema}
+    
+    # Simplified ExtractJSONTool implementation
+    class ExtractJSONTool:
+        """Simple compatibility version of the ExtractJSONTool."""
+        def __init__(self):
+            # Fixed properties - no constructor parameters
+            self.name = "extract_json"
+            self.description = "Extract and parse JSON from text"
+            
+            def extract_json(text):
+                """Extract JSON from text with robust error handling."""
+                try:
+                    import json
+                    import re
+                    
+                    # Look for code blocks first
+                    json_pattern = r'```(?:json)?\s*([\s\S]*?)\s*```'
+                    json_matches = re.findall(json_pattern, text)
+                    
+                    if json_matches:
+                        # Try each match
+                        for json_str in json_matches:
+                            try:
+                                result = json.loads(json_str)
+                                return json.dumps(result, indent=2)
+                            except:
+                                continue
+                    
+                    # Try the whole text
+                    try:
+                        result = json.loads(text)
+                        return json.dumps(result, indent=2)
+                    except:
+                        pass
+                    
+                    # Try finding objects with regex as last resort
+                    try:
+                        json_object_pattern = r'{[\s\S]*}'
+                        match = re.search(json_object_pattern, text)
+                        if match:
+                            obj_text = match.group(0)
+                            result = json.loads(obj_text)
+                            return json.dumps(result, indent=2)
+                    except:
+                        pass
+                        
+                    return text
+                except Exception:
+                    return text
+            
+            # Store the function
+            self.function = extract_json
+        
+        def __call__(self, *args, **kwargs):
+            return self.function(*args, **kwargs)
+            
+        # Add invoke method for newer CrewAI versions
+        def invoke(self, input_str=None, **kwargs):
+            """Required for compatibility with newer CrewAI versions"""
+            # Handle case where input_str is not provided or empty
+            if input_str is None or input_str == "":
+                # Try to get input from kwargs
+                if "input" in kwargs:
+                    input_str = kwargs["input"]
+                elif "query" in kwargs:
+                    input_str = kwargs["query"]
+                elif "text" in kwargs:
+                    input_str = kwargs["text"]
+                elif "content" in kwargs:
+                    input_str = kwargs["content"]
+                elif len(kwargs) > 0:
+                    # Try to use the first kwargs value
+                    input_str = next(iter(kwargs.values()))
+                else:
+                    # Fallback to empty string if no input is provided
+                    input_str = "{}"
+            
+            # If input_str is already a dict, convert it to JSON string
+            if isinstance(input_str, (dict, list)):
+                try:
+                    import json
+                    input_str = json.dumps(input_str)
+                except Exception:
+                    input_str = str(input_str)
+            
+            # Get the result
+            result = self.function(input_str)
+            
+            # Use the common utility to ensure consistent string output
+            return ensure_string_output(result)
+        
+        # Add result_as_answer method for newer CrewAI versions
+        def result_as_answer(self, result):
+            """Format result as a user-friendly answer"""
+            try:
+                import json
+                if isinstance(result, (dict, list)):
+                    return json.dumps(result, indent=2)
+                return str(result)
+            except Exception:
+                return str(result)
+        
+        # Add run method for LangChain compatibility
+        def run(self, input_str=None, **kwargs):
+            """For LangChain compatibility"""
+            # Get result using invoke and ensure it's a string if needed
+            result = self.invoke(input_str, **kwargs)
+            return ensure_string_output(result)
+            
+        def __dict__(self):
+            return {}
     
     # Extended base classes as fallbacks
     class ExtendedAgent(Agent):
         """Fallback Extended Agent class"""
         def __init__(self, role, goal, backstory, **kwargs):
-            super().__init__(role=role, goal=goal, backstory=backstory, **kwargs)
-            self.character_name = kwargs.get("character_name", role)
-            self.tone = kwargs.get("tone", "Professional")
-            self.learning_style = kwargs.get("learning_style", "Analytical")
-            self.working_style = kwargs.get("working_style", "Methodical")
-            self.communication_style = kwargs.get("communication_style", "Clear and concise")
-            self.quirks = kwargs.get("quirks", [])
-            self.metadata = kwargs.get("metadata", {})
+            # Extract name related fields
+            name = kwargs.get("name") or kwargs.get("character_name") or role
+            
+            # Don't pass name through to avoid compatibility issues
+            filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['name', 'character_name']}
+            super().__init__(role=role, goal=goal, backstory=backstory, **filtered_kwargs)
+            
+            # Store properties directly in __dict__ to avoid attribute errors
+            agent_dict = self.__dict__
+            agent_dict['_name'] = name  # Store name internally
+            agent_dict['tone'] = kwargs.get("tone", "Professional")
+            agent_dict['learning_style'] = kwargs.get("learning_style", "Analytical")
+            agent_dict['working_style'] = kwargs.get("working_style", "Methodical")
+            agent_dict['communication_style'] = kwargs.get("communication_style", "Clear and concise")
+            agent_dict['quirks'] = kwargs.get("quirks", [])
+            
+            # Handle metadata
+            metadata = kwargs.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata['name'] = name
+            metadata['character_name'] = name
+            agent_dict['metadata'] = metadata
+        
+        @property
+        def name(self):
+            """Safe property to get name from various places"""
+            if hasattr(self, '_name') and self._name:
+                return self._name
+            if hasattr(self, 'metadata') and isinstance(self.metadata, dict):
+                if 'name' in self.metadata:
+                    return self.metadata['name']
+                if 'character_name' in self.metadata:
+                    return self.metadata['character_name']
+            return self.role
             
         def to_dict(self):
             return {
                 "role": self.role,
                 "goal": self.goal,
                 "backstory": self.backstory,
-                "character_name": self.character_name,
-                "metadata": self.metadata
+                "name": self.name,  # Use the safe name property
+                "character_name": self.name,  # Include both for compatibility
+                "metadata": getattr(self, 'metadata', {})
             }
             
         @classmethod

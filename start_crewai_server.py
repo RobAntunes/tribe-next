@@ -60,6 +60,8 @@ def main():
         # Set up environment variables
         env = os.environ.copy()
         env["PYTHONPATH"] = f"{cwd}:{env.get('PYTHONPATH', '')}"
+        # Explicitly set VIRTUAL_ENV to help tools detect the correct environment
+        env["VIRTUAL_ENV"] = str(VENV_PATH)
         
         # Run the server
         subprocess.run(

@@ -45,7 +45,12 @@ export interface Agent {
     backstory?: string;
     description?: string;
     short_description?: string;
-    skills?: string[];
+    traits?: string[];   // Personality traits
+    quirks?: string[];   // Unique qualities
+    tone?: string;       // Communication tone
+    learning_style?: string;
+    working_style?: string;
+    communication_style?: string;
     autonomyState?: AutonomyState;
     performanceMetrics?: PerformanceMetrics;
     tools?:
@@ -56,6 +61,9 @@ export interface Agent {
         | string[];
     collaborationPatterns?: any;
     learningEnabled?: boolean;
+    teams?: string[];    // Teams this agent belongs to
+    leadsTeams?: string[]; // Teams this agent leads
+    canCreateSubTeams?: boolean;
 }
 
 export interface AgentContext {
@@ -87,12 +95,27 @@ export interface Message {
     agentContext?: AgentContext; // Full agent context for the sender (if agent) or targetAgent
 }
 
+export interface TeamMember {
+    id: string;
+    role?: string;
+    isTeamLead?: boolean;
+}
+
 export interface Team {
     id: string;
     name: string;
+    description?: string;
+    focus_area?: string;
     managerId: string;
-    members: string[];
+    members: string[] | TeamMember[];
     parentTeamId?: string;
+    subTeams?: string[];  // IDs of child teams
+    dynamicallyCreated?: boolean;
+    creationDate?: string;
+    relationships?: Array<{
+        teamId: string;
+        nature: string;
+    }>;
 }
 
 export interface ProjectState {
@@ -121,10 +144,18 @@ export interface AgentSpec {
     id?: string;
     name: string;
     role: string;
-    skills?: string[];
+    traits?: string[];
+    quirks?: string[];
+    tone?: string;
+    learning_style?: string;
+    working_style?: string;
+    communication_style?: string;
     description?: string;
     responsibilities?: string[];
     tools?: string[];
     autonomyLevel?: number;
+    teams?: string[];
+    leadsTeams?: string[];
+    canCreateSubTeams?: boolean;
     customAttributes?: Record<string, any>;
 }
