@@ -61,13 +61,37 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
     // Use the markdown-it library to render the content
     const renderedHtml = md.render(preprocessedContent);
     
+    // Function to extract only relevant code snippets
+    const formatCodeForDisplay = (code: string, lang: string): string => {
+        // If code is too large, show only beginning and end with indication of truncation
+        const maxLines = 30;
+        const lines = code.split('\n');
+        
+        if (lines.length > maxLines) {
+            // If it's a command, keep it all (likely bash commands)
+            if (lang === 'bash' || lang === 'sh' || lang === 'cmd') {
+                return code;
+            }
+            
+            // For code, keep first 10 lines and last 10 lines with an ellipsis in the middle
+            const startLines = lines.slice(0, 15).join('\n');
+            const endLines = lines.slice(-15).join('\n');
+            return `${startLines}\n\n// ... ${lines.length - 30} more lines ...\n\n${endLines}`;
+        }
+        
+        return code;
+    };
+    
     // Wrap code blocks with action buttons and diff preview option
     const enhancedHtml = renderedHtml.replace(
         /<pre class="language-([^"]*)"><code class="language-([^"]*)">([^<]+)<\/code><\/pre>/g, 
         (match, lang1, lang2, code) => {
+            // Process code for display to show only relevant parts
+            const displayCode = formatCodeForDisplay(code, lang1);
+            
             return `<pre class="language-${lang1}">
                 <div class="code-actions">
-                    <button class="code-action-button copy" title="Copy code" data-code="${encodeURIComponent(code)}" data-lang="${lang1}">
+                    <button class="code-action-button copy" title="Copy full code" data-code="${encodeURIComponent(code)}" data-lang="${lang1}">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -85,7 +109,7 @@ const MarkdownRenderer: React.FC<{ content: string }> = ({ content }) => {
                         </svg>
                     </button>
                 </div>
-                <code class="language-${lang2}">${code}</code>
+                <code class="language-${lang2}">${displayCode}</code>
             </pre>`;
         }
     );
@@ -953,7 +977,28 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                         <div className="loading-indicator-container">
                             <div className="loading-indicator">
                                 <div className="loading-spinner"></div>
-                                <span>{loadingAgent} is thinking...</span>
+                                <span>
+                                    <strong>{loadingAgent}</strong> is working...
+                                    {/* Dynamic operation label based on context */}
+                                    {(() => {
+                                        // We can infer operation type from recent messages or context
+                                        const lastMessage = organizedMessages.length > 0 
+                                            ? organizedMessages[organizedMessages.length - 1].content?.toLowerCase() 
+                                            : '';
+                                        
+                                        if (lastMessage?.includes('searching') || lastMessage?.includes('looking for')) {
+                                            return ' 🔍 Searching files';
+                                        } else if (lastMessage?.includes('edit') || lastMessage?.includes('writing')) {
+                                            return ' ✏️ Editing code';
+                                        } else if (lastMessage?.includes('reading') || lastMessage?.includes('analyzing')) {
+                                            return ' 📖 Reading files';
+                                        } else if (lastMessage?.includes('running') || lastMessage?.includes('executing')) {
+                                            return ' 🚀 Running command';
+                                        } else {
+                                            return ' 🧠 Processing request';
+                                        }
+                                    })()}
+                                </span>
                             </div>
                         </div>
                     )}

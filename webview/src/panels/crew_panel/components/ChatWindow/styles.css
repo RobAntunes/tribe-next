@@ -399,8 +399,12 @@
 .loading-indicator-container {
     display: flex;
     justify-content: center;
+    position: sticky;
+    bottom: 10px;
+    z-index: 10;
     padding: var(--space-2) 0;
     margin-top: var(--space-2);
+    pointer-events: none;
 }
 
 .loading-indicator {
@@ -408,12 +412,15 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    background-color: color-mix(in srgb, var(--vscode-editor-background) 95%, var(--tribe-primary) 5%);
+    background-color: color-mix(in srgb, var(--vscode-editor-background) 90%, var(--tribe-primary) 10%);
     border-radius: var(--radius-full);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow-md);
     font-size: var(--font-size-xs);
     color: var(--tribe-primary);
-    animation: fadeInUp 0.3s ease-out;
+    animation: fadeInUp 0.3s ease-out, pulse 2s ease-in-out infinite;
+    font-weight: 500;
+    border: 1px solid color-mix(in srgb, var(--tribe-primary) 30%, transparent 70%);
+    max-width: 80%;
 }
 
 @keyframes fadeInUp {
@@ -427,13 +434,30 @@
     }
 }
 
+@keyframes pulse {
+    0% {
+        box-shadow: var(--shadow-md), 0 0 0 0 color-mix(in srgb, var(--tribe-primary) 20%, transparent 80%);
+    }
+    70% {
+        box-shadow: var(--shadow-md), 0 0 0 6px color-mix(in srgb, var(--tribe-primary) 0%, transparent 100%);
+    }
+    100% {
+        box-shadow: var(--shadow-md), 0 0 0 0 color-mix(in srgb, var(--tribe-primary) 0%, transparent 100%);
+    }
+}
+
 .loading-spinner {
-    width: 12px;
-    height: 12px;
-    border: 2px solid rgba(var(--tribe-primary), 0.2);
+    width: 14px;
+    height: 14px;
+    border: 2px solid color-mix(in srgb, var(--tribe-primary) 30%, transparent 70%);
     border-top-color: var(--tribe-primary);
     border-radius: 50%;
     animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
 }
 
 .error-content {
