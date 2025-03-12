@@ -2073,7 +2073,7 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
      */
     private async _handleAgentMessage(messageData: any): Promise<void> {
         try {
-            const { content, targetAgent, loadingMessageId, agentContext, isGroupMessage } = messageData;
+            const { content, targetAgent, directTo, loadingMessageId, agentContext, isGroupMessage } = messageData;
             
             try {
                 if (isGroupMessage) {
@@ -2166,7 +2166,8 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                         payload: {
                             id: loadingMessageId,
                             content: `${agent.name} is thinking...`,
-                            status: 'loading'
+                            status: 'loading',
+                            directTo: messageData.targetAgent
                         }
                     });
                     
@@ -2190,7 +2191,8 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                     // Send to specific agent via CrewAI
                     const response = await vscode.commands.executeCommand('mightydev.relayToCrewAI', 'send_message', {
                         message: content,
-                        agent_id: targetAgent
+                        agent_id: targetAgent,
+                        directTo: messageData.directTo || targetAgent // Pass directTo explicitly to ensure agent personality traits are included
                     }) as { status?: string; response?: string; message?: string; limited_functionality?: boolean; error_type?: string };
                     
                     if (response && response.status === 'completed') {
@@ -2205,7 +2207,8 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                             payload: {
                                 id: loadingMessageId,
                                 content: responseContent,
-                                status: 'completed'
+                                status: 'completed',
+                                directTo: messageData.targetAgent
                             }
                         });
                     } else if (response && response.status === 'error') {
@@ -2216,7 +2219,8 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                                 payload: {
                                     id: loadingMessageId,
                                     content: `I'm currently unable to process your message due to network connectivity issues. Please check your internet connection and try again when you're back online.`,
-                                    status: 'completed'
+                                    status: 'completed',
+                                    directTo: messageData.targetAgent
                                 }
                             });
                         } else {
@@ -2287,7 +2291,8 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                 payload: {
                     id: messageData.loadingMessageId,
                     content: `Error: ${error instanceof Error ? error.message : String(error)}`,
-                    status: 'error'
+                    status: 'error',
+                    directTo: messageData.targetAgent // Preserve directTo property for message filtering
                 }
             });
             

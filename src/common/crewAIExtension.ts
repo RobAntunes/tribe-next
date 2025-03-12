@@ -6,6 +6,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { EXTENSION_ROOT_DIR, CREWAI_MAIN_SCRIPT, TRIBE_FOLDER, CREWAI_VENV_PYTHON } from './constants';
 import { traceError, traceInfo, traceDebug } from './log/logging';
 import { getInterpreterDetails } from './python';
+import { LearningSystem } from './learningSystem';
 
 /**
  * CrewAI Extension class that extends the base CrewAI functionality
@@ -15,12 +16,14 @@ export class CrewAIExtension {
     private _pythonProcess: ChildProcess | undefined;
     private _projectPath: string | undefined;
     private _pythonPath: string[] | undefined;
+    private _learningSystem: LearningSystem | undefined;
     
     constructor(private readonly _context: vscode.ExtensionContext) {
         // Initialize the project path from the workspace root if available
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders && workspaceFolders.length > 0) {
             this._projectPath = workspaceFolders[0].uri.fsPath;
+            this._learningSystem = new LearningSystem(this._projectPath);
             traceInfo(`Initialized CrewAIExtension with project path: ${this._projectPath}`);
         } else {
             traceInfo('CrewAIExtension initialized without a project path');
@@ -339,9 +342,45 @@ export class CrewAIExtension {
         }
         
         try {
+            // Enhanced payload with learning context if this is a message or agent request
+            let enhancedPayload = { ...payload };
+            
+            // Add learning context for send_message and create_agent commands
+            if (this._learningSystem && (command === 'send_message' || command === 'create_agent')) {
+                const agentId = payload.agent_id || (payload.id || '');
+                
+                if (agentId) {
+                    try {
+                        // Get learning context for this agent
+                        const learningContext = await this._learningSystem.getAgentLearningContext(agentId);
+                        
+                        // For send_message, add learning context to metadata
+                        if (command === 'send_message') {
+                            enhancedPayload.metadata = {
+                                ...(enhancedPayload.metadata || {}),
+                                learning_context: learningContext
+                            };
+                            traceInfo(`Added learning context to agent ${agentId} message`);
+                        }
+                        
+                        // For create_agent, add learning context to agent metadata
+                        if (command === 'create_agent') {
+                            enhancedPayload.metadata = {
+                                ...(enhancedPayload.metadata || {}),
+                                learning_context: learningContext
+                            };
+                            traceInfo(`Added learning context to agent ${agentId} creation`);
+                        }
+                    } catch (learningError) {
+                        traceError('Error adding learning context:', learningError);
+                        // Continue without learning context in case of error
+                    }
+                }
+            }
+            
             const request = {
                 command,
-                payload
+                payload: enhancedPayload
             };
             
             traceInfo(`Sending request to CrewAI server: ${JSON.stringify(request)}`);

@@ -364,7 +364,23 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 	
 	// Set up state
 	const [activeTab, setActiveTab] = useState<TabType>('get-started');
-	const [currentMessages, setCurrentMessages] = useState<Message[]>([]);
+	// Initialize messages as an empty array, ignore any previously stored messages
+	const [currentMessages, setCurrentMessages] = useState<Message[]>(() => {
+		// Clear any stored messages in VS Code webview state to prevent persistence
+		try {
+			const state = vscode.getState() || {};
+			if (state.messages) {
+				console.log('Clearing stored messages from VSCode state during initialization');
+				vscode.setState({
+					...state,
+					messages: []
+				});
+			}
+		} catch (error) {
+			console.error('Error accessing VSCode state:', error);
+		}
+		return [];
+	});
 	const [targetAgentId, setTargetAgentId] = useState<string | null>(null);
 	const [newMessageContent, setNewMessageContent] = useState('');
 	const [sendingMessage, setSendingMessage] = useState(false);
@@ -684,6 +700,28 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 			case 'LEARNING_SYSTEM_TOGGLED':
 				setLearningSystemEnabled(message.payload.enabled);
 				break;
+			case 'RESET_TRIBE':
+				// Reset message history when tribe is reset
+				console.log('RESET_TRIBE received in CrewPanel - clearing messages');
+				
+				// Clear message array in React state
+				setCurrentMessages([]);
+				
+				// Clear project state
+				setProjectState(defaultProjectState);
+				
+				// Clear VSCode webview state - this helps prevent persistence across resets
+				try {
+					// Set an empty array for messages in VSCode webview state
+					vscode.setState({
+						...vscode.getState(),
+						messages: []
+					});
+					console.log('VSCode webview state cleared for messages');
+				} catch (error) {
+					console.error('Failed to clear VSCode webview state:', error);
+				}
+				break;
 			default:
 				console.log('Unknown message type:', message.type);
 		}
@@ -757,6 +795,7 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 			timestamp: payload.timestamp || new Date().toISOString(),
 			type: payload.type || 'agent',
 			targetAgent: payload.targetAgent,
+			directTo: payload.directTo || payload.targetAgent, // Add directTo property for filtering
 			teamId: payload.teamId,
 			isManagerResponse: payload.isManagerResponse,
 			isVPResponse: payload.isVPResponse,
@@ -826,7 +865,8 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 			content: newMessageContent,
 			timestamp: new Date().toISOString(),
 			type: 'user',
-			targetAgent: targetAgentId || undefined
+			targetAgent: targetAgentId || undefined,
+			directTo: targetAgentId || undefined // Add directTo for proper message filtering
 		};
 		
 		// Add to messages state
@@ -840,6 +880,7 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 			timestamp: new Date().toISOString(),
 			type: 'agent',
 			targetAgent: targetAgentId || undefined,
+			directTo: targetAgentId || undefined, // Add directTo for proper message filtering
 			isLoading: true,
 			status: 'loading'
 		};
@@ -853,6 +894,7 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 			payload: {
 				content: newMessageContent,
 				targetAgent: targetAgentId,
+				directTo: targetAgentId, // Explicitly include directTo to ensure personality traits are added
 				loadingMessageId: loadingMessage.id,
 				// Include complete agent context if available
 				agentContext: targetAgent ? {

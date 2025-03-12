@@ -198,6 +198,90 @@ try:
             if not hasattr(self, 'system_template') or self.system_template is None:
                 self._add_personality_to_prompt()
                 
+        # Override _process_message to ensure metadata is included with each prompt
+        def _process_message(self, message: str, *args, **kwargs):
+            """
+            Process a message from the user, ensuring metadata is attached to each prompt.
+            This ensures that agent metadata is consistently included with every message
+            to the foundation model, not just at agent creation time.
+            
+            Args:
+                message: The message to process
+                *args: Additional positional arguments
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                The processed response
+            """
+            try:
+                # Make sure learning context is updated from metadata before processing
+                self._ensure_metadata_in_prompt()
+                
+                # Log detailed information about the message and system prompt
+                logger.info(f"Processing message for agent: {self.name}")
+                logger.info(f"User message: {message[:100]}..." if len(message) > 100 else f"User message: {message}")
+                
+                # Log the complete system prompt so we can see if personality traits are included
+                if hasattr(self, "system_prompt") and isinstance(self.system_prompt, str):
+                    system_length = len(self.system_prompt)
+                    logger.info(f"System prompt length: {system_length} characters")
+                    
+                    # Log the first part of the system prompt
+                    first_part = self.system_prompt[:500] + "..." if system_length > 500 else self.system_prompt
+                    logger.info(f"System prompt (first part): {first_part}")
+                    
+                    # Log specifically if the character information section exists
+                    if "# Character Information" in self.system_prompt:
+                        char_info_idx = self.system_prompt.find("# Character Information")
+                        char_info_section = self.system_prompt[char_info_idx:char_info_idx+500] + "..." if system_length - char_info_idx > 500 else self.system_prompt[char_info_idx:]
+                        logger.info(f"Character Information section: {char_info_section}")
+                    else:
+                        logger.warning("NO CHARACTER INFORMATION SECTION FOUND IN SYSTEM PROMPT!")
+                else:
+                    logger.warning("Agent does not have a system_prompt attribute or it's not a string!")
+                
+                # Call the parent class's _process_message method with the updated context
+                return super()._process_message(message, *args, **kwargs)
+            except Exception as e:
+                logger.error(f"Error processing message with metadata: {e}")
+                # Fall back to the parent class's method if our enhancement fails
+                return super()._process_message(message, *args, **kwargs)
+                
+        def _ensure_metadata_in_prompt(self):
+            """
+            Ensure all metadata is included in the system prompt before each message.
+            This updates the system prompt with the latest metadata, ensuring each
+            message to the foundation model includes up-to-date context.
+            """
+            try:
+                # Force adding metadata regardless of current state
+                # Always apply personality and traits to each message
+                
+                if hasattr(self, "system_prompt"):
+                    # Check if our special section is already in the prompt, if so, update it
+                    if "# Character Information" in self.system_prompt:
+                        # First save the original part of the prompt (before our additions)
+                        original_prompt = self.system_prompt.split("# Character Information")[0]
+                        
+                        # Now set the system prompt to the original part
+                        self.system_prompt = original_prompt
+                        
+                        # Re-add the personality section with current metadata
+                        self._add_personality_to_prompt()
+                        logger.info(f"Refreshed agent personality traits for {self.name}")
+                    else:
+                        # Just add the personality section if it doesn't exist
+                        self._add_personality_to_prompt()
+                        logger.info(f"Added agent personality traits for {self.name}")
+                else:
+                    # If no system_prompt exists, create one with personality
+                    self.system_prompt = f"You are {self.name}, a {self.role}."
+                    self._add_personality_to_prompt()
+                    logger.info(f"Created new system prompt with personality traits for {self.name}")
+            except Exception as e:
+                logger.error(f"Error ensuring metadata in prompt: {e}")
+                # Continue without updating if there's an error
+                
         @property
         def name(self):
             """Safe property to get name from various places"""
@@ -212,27 +296,75 @@ try:
         def _add_personality_to_prompt(self):
             """Add personality metadata to the agent's system prompt"""
             if hasattr(self, "system_prompt"):
-                # Use the name property which safely gets the name from any location
-                personality_section = f"""
+                # Get agent name and role safely
+                agent_name = self.name
+                agent_role = self.role
                 
+                # Ensure tone and styles have default values
+                tone = getattr(self, 'tone', 'Professional') 
+                communication_style = getattr(self, 'communication_style', 'Clear and concise')
+                learning_style = getattr(self, 'learning_style', 'Analytical')
+                working_style = getattr(self, 'working_style', 'Methodical')
+                
+                # Start with agent identity information
+                personality_section = f"""
+
 # Character Information
-You are {self.name}, a {self.role}. You communicate in a {self.tone} tone with a {self.communication_style} communication style.
-Your learning style is {self.learning_style} and you work in a {self.working_style} manner.
+You are {agent_name}, a {agent_role}. You communicate in a {tone} tone with a {communication_style} communication style.
+Your learning style is {learning_style} and you work in a {working_style} manner.
 """
                 
                 # Add personality traits if any
-                if self.traits:
-                    traits_text = ", ".join(self.traits)
-                    personality_section += f"\nYour personality traits include: {traits_text}. These are inherent aspects of your character."
+                traits = getattr(self, 'traits', [])
+                if traits and len(traits) > 0:
+                    if isinstance(traits, list):
+                        traits_text = ", ".join(traits)
+                        personality_section += f"\nYour personality traits include: {traits_text}. These are inherent aspects of your character."
+                    elif isinstance(traits, str):
+                        personality_section += f"\nYour personality traits include: {traits}. These are inherent aspects of your character."
                 
                 # Add quirks if any
-                if self.quirks:
-                    quirks_text = ", ".join(self.quirks)
-                    personality_section += f"\nYou have the following quirks: {quirks_text}. These are unique qualities that make you distinctive."
+                quirks = getattr(self, 'quirks', [])
+                if quirks and len(quirks) > 0:
+                    if isinstance(quirks, list):
+                        quirks_text = ", ".join(quirks)
+                        personality_section += f"\nYou have the following quirks: {quirks_text}. These are unique qualities that make you distinctive."
+                    elif isinstance(quirks, str):
+                        personality_section += f"\nYou have the following quirks: {quirks}. These are unique qualities that make you distinctive."
+                
+                # Add available tools information if present
+                if hasattr(self, 'tools') and self.tools:
+                    tool_names = [getattr(tool, 'name', str(tool)) for tool in self.tools]
+                    personality_section += f"\n\nYou have access to the following tools: {', '.join(tool_names)}."
+                
+                # Add metadata from the metadata dictionary if it exists
+                if hasattr(self, 'metadata') and isinstance(self.metadata, dict):
+                    # Add any learning context or other relevant metadata
+                    if 'learning_context' in self.metadata:
+                        personality_section += f"\n\n{self.metadata['learning_context']}"
+                    
+                    # Add any specific skills if present
+                    if 'skills' in self.metadata:
+                        skills = self.metadata['skills']
+                        if isinstance(skills, list):
+                            skills_text = ", ".join(skills)
+                            personality_section += f"\n\nYour specialized skills include: {skills_text}."
+                        elif isinstance(skills, str):
+                            personality_section += f"\n\nYour specialized skills include: {skills}."
+                
+                # Add a reminder about showing personality consistently
+                personality_section += "\n\nIMPORTANT: Make sure your responses consistently reflect your unique tone, traits, quirks, and communication style."
                 
                 # Update the system prompt
                 if isinstance(self.system_prompt, str):
                     self.system_prompt += personality_section
+                    
+                # Log the personality information being added
+                logger.info(f"Added personality information for {agent_name}: tone={tone}, style={communication_style}")
+                if traits and len(traits) > 0:
+                    logger.info(f"Added traits for {agent_name}: {traits}")
+                if quirks and len(quirks) > 0:
+                    logger.info(f"Added quirks for {agent_name}: {quirks}")
         
         def to_dict(self) -> Dict[str, Any]:
             """Convert agent to a serializable dictionary"""

@@ -83,6 +83,7 @@ export interface Message {
     timestamp: string;
     type: 'user' | 'agent' | 'system';
     targetAgent?: string;
+    directTo?: string; // ID of the agent this message is directed to
     teamId?: string;
     isManagerResponse?: boolean;
     isVPResponse?: boolean;

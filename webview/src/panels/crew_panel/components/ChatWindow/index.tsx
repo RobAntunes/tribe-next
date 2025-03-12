@@ -472,7 +472,7 @@ const ThreadView: React.FC<{
 
 interface ChatWindowProps {
     messages: EnhancedMessage[];
-    onSendMessage?: (message: string, to?: string | string[], teamId?: string, threadId?: string, parentId?: string) => void;
+    onSendMessage?: (message: string, to?: string | string[], teamId?: string, threadId?: string, parentId?: string, directTo?: string) => void;
     onReactToMessage?: (messageId: string, emoji: string) => void;
     onViewThread?: (threadId: string) => void;
     onReplyToMessage?: (messageId: string, threadId?: string) => void;
@@ -610,10 +610,20 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             if (selectedRecipients.length === 1) {
                 // Direct message to a single agent - send to a single recipient
                 const directRecipient = selectedRecipients[0];
-                onSendMessage(messageInput, directRecipient);
                 
-                // We can add the directMessage property by modifying messages in the parent component
-                // or by extending the API in the future
+                // Update: Add directTo property to the message by calling special "send with metadata" function
+                const vscode = (window as any).acquireVsCodeApi?.();
+                if (typeof (window as any).postDirectMessage === 'function') {
+                    // If special handler is available, use it
+                    (window as any).postDirectMessage({
+                        content: messageInput,
+                        directTo: directRecipient
+                    });
+                } else {
+                    // Otherwise, use standard handler that supports recipient parameter
+                    // Make sure to explicitly pass the directTo property for agent metadata
+                    onSendMessage(messageInput, directRecipient, undefined, undefined, undefined, directRecipient);
+                }
             } else {
                 // Group message to multiple agents - use the string[] recipient type
                 onSendMessage(messageInput, selectedRecipients);
@@ -657,6 +667,39 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
 
     // Organize messages by thread if needed
     let organizedMessages = [...messages];
+    
+    // Filter messages based on the current agent/recipient
+    if (currentAgentId) {
+        // When viewing a specific agent, only show:
+        // 1. Messages sent directly to this agent (directTo === currentAgentId)
+        // 2. Messages sent by this agent (sender === currentAgentId)
+        // 3. Messages sent to a group that includes this agent (recipientIds includes currentAgentId)
+        // 4. Messages that have no specific recipient (broadcast messages)
+        organizedMessages = organizedMessages.filter(msg => {
+            // Check if this is a direct message to the current agent
+            if ((msg as EnhancedMessage).directTo === currentAgentId) {
+                return true;
+            }
+            
+            // Check if this message was sent by the current agent
+            if (msg.sender === currentAgentId) {
+                return true;
+            }
+            
+            // Check if this is a group message that includes the current agent
+            const enhancedMsg = msg as EnhancedMessage;
+            if (enhancedMsg.recipientIds && enhancedMsg.recipientIds.includes(currentAgentId)) {
+                return true;
+            }
+            
+            // Check if message has no specific recipient (broadcast)
+            if (!enhancedMsg.directTo && !enhancedMsg.recipientIds) {
+                return true;
+            }
+            
+            return false;
+        });
+    }
     
     // Filter messages based on selected team or thread
     if (selectedTeamId && showTeamMessages) {
