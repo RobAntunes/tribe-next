@@ -414,15 +414,18 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 	const [learningSystemEnabled, setLearningSystemEnabled] = useState(true);
 	const [isResetDropdownOpen, setIsResetDropdownOpen] = useState(false);
 
-	// Tab configuration
+	// Tab configuration - always include learning-improvement for environment access
 	const tabOrder: TabType[] = projectState.initialized
 		? ['main-dashboard', 'development-hub', 'collaboration-center', 'learning-improvement']
-		: ['get-started'];
+		: ['get-started', 'learning-improvement'];
 		
 	// Define state variables for subtabs
 	const [developmentSubTab, setDevelopmentSubTab] = useState<'tasks' | 'actions' | 'changes' | 'checkpoints'>('tasks');
 	const [collaborationSubTab, setCollaborationSubTab] = useState<'messages' | 'agents' | 'decisions'>('messages');
-	const [learningSubTab, setLearningSubTab] = useState<'feedback' | 'learning' | 'reflection' | 'environment'>('feedback');
+	// Default to environment tab if project is not initialized
+	const [learningSubTab, setLearningSubTab] = useState<'feedback' | 'learning' | 'reflection' | 'environment'>(
+		projectState.initialized ? 'feedback' : 'environment'
+	);
 
 	// Add debugging logs
 	useEffect(() => {
@@ -467,8 +470,14 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 		'learning-improvement': {
 			icon: <Brain size={20} />,
 			label: 'Learning',
-			onClick: () => setActiveTab('learning-improvement'),
-			disabled: !projectState.initialized
+			onClick: () => {
+				setActiveTab('learning-improvement');
+				// Set environment subtab by default for non-initialized projects
+				if (!projectState.initialized) {
+					setLearningSubTab('environment');
+				}
+			},
+			disabled: false // Never disabled so environment can be accessed
 		}
 	};
 
@@ -1164,8 +1173,8 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 			);
 		}
 
-		// Require initialization for all other tabs
-		if (!projectState.initialized) {
+		// Require initialization for all tabs except learning-improvement (for env manager)
+		if (!projectState.initialized && activeTab !== 'learning-improvement') {
 			return (
 				<div className="not-initialized">
 					<h2>Not Initialized</h2>
@@ -1427,18 +1436,23 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 
 		// Learning & Improvement
 		if (activeTab === 'learning-improvement') {
-				const learningSubTabs = [
-					{ value: "feedback", label: "Feedback", icon: <MessageSquare size={16} /> },
-					{ value: "learning", label: "Learning", icon: <Brain size={16} /> },
-					{ value: "reflection", label: "Reflection", icon: <IterationCcw size={16} /> },
-					{ value: "environment", label: "Environment", icon: <Settings size={16} /> }
-				];
+				// Limit tabs if project isn't initialized
+				const learningSubTabs = projectState.initialized 
+					? [
+						{ value: "feedback", label: "Feedback", icon: <MessageSquare size={16} /> },
+						{ value: "learning", label: "Learning", icon: <Brain size={16} /> },
+						{ value: "reflection", label: "Reflection", icon: <IterationCcw size={16} /> },
+						{ value: "environment", label: "Environment", icon: <Settings size={16} /> }
+					]
+					: [
+						{ value: "environment", label: "Environment", icon: <Settings size={16} /> }
+					];
 			return (
 				<div className="learning-container">
 					{renderSubTabs('learning', learningSubTab, setLearningSubTab, learningSubTabs)}
 					
 					<div className="learning-content">
-						{learningSubTab === 'feedback' && (
+						{projectState.initialized && learningSubTab === 'feedback' && (
 							<FeedbackSystem
 								agents={projectState.activeAgents.map(agent => ({ id: agent.id, name: agent.name || agent.role }))}
 								onSubmitFeedback={(feedback) => {
@@ -1470,7 +1484,7 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 							/>
 						)}
 						
-						{learningSubTab === 'learning' && (
+						{projectState.initialized && learningSubTab === 'learning' && (
 							<LearningSystem
 										onCaptureExperience={(experience) => {
 											return new Promise((resolve) => {
@@ -1501,7 +1515,7 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 										}, {})}
 									/>
 						)}
-						{learningSubTab === 'reflection' && (
+						{projectState.initialized && learningSubTab === 'reflection' && (
 							<ReflectionSystem
 								onCreateReflection={(agents, focus, reflectionAgent) => {
 									return new Promise((resolve) => {

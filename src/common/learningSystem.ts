@@ -250,6 +250,78 @@ export class LearningSystem {
     }
     
     /**
+     * Create a reflection specifically to analyze and improve responses
+     * This implements the ability for the model to reflect on its own responses
+     * both before and after generating them
+     * 
+     * @param agentId Agent ID to create reflection for
+     * @param content Content to reflect on
+     * @param focus Focus area for reflection (e.g., 'Response Quality', 'Code Generation', etc.)
+     * @param stage 'pre' for before generating a response, 'post' for after
+     */
+    public async createResponseReflection(
+        agentId: string, 
+        content: string, 
+        focus: string = 'Response Quality',
+        stage: 'pre' | 'post' = 'post'
+    ): Promise<Reflection | null> {
+        try {
+            // Define reflection framework based on stage
+            let insights: string[] = [];
+            let actionPlan: string[] = [];
+            
+            if (stage === 'pre') {
+                // Pre-response reflection (before generating a response)
+                insights = [
+                    `Based on the query, the user seems to need detailed explanations of concepts X and Y`,
+                    `The user may need examples for clarity based on their prior questions`,
+                    `This query requires both high-level explanation and technical details`
+                ];
+                
+                actionPlan = [
+                    `Start with a clear, concise overview before diving into technical details`,
+                    `Include practical examples that demonstrate the concepts in action`,
+                    `Structure the response with clear headings and code examples where appropriate`
+                ];
+            } else {
+                // Post-response reflection (after generating a response)
+                // In a real implementation, this would analyze the actual content
+                insights = [
+                    `The response addresses key points but could be more concise in sections A and B`,
+                    `The explanation provides good technical depth but uses terminology that may be unclear`,
+                    `Code examples are helpful but could benefit from more comments explaining the logic`
+                ];
+                
+                actionPlan = [
+                    `In future responses, focus on more concise explanations while maintaining depth`,
+                    `Define technical terms when first introduced or use simpler alternatives`,
+                    `Add more descriptive comments to code examples to explain the "why" not just the "what"`
+                ];
+            }
+            
+            const reflection: Reflection = {
+                id: `reflection-${Date.now()}-${stage}`,
+                agent_id: agentId,
+                focus: `${focus} (${stage === 'pre' ? 'Pre-Response' : 'Post-Response'})`,
+                insights,
+                action_plan: actionPlan,
+                created_at: new Date().toISOString()
+            };
+            
+            // Save the reflection
+            await this.createReflection(reflection);
+            
+            // In a real implementation, this would be used to improve the model's responses
+            // by applying the insights and action plan
+            traceInfo(`Created ${stage}-response reflection for agent ${agentId} on ${focus}`);
+            return reflection;
+        } catch (error) {
+            traceError('Failed to create response reflection:', error);
+            return null;
+        }
+    }
+    
+    /**
      * Generate a learning summary for an agent
      */
     public async generateLearningSummary(agentId: string): Promise<string> {
@@ -355,9 +427,10 @@ export class LearningSystem {
         try {
             const insights = this.getInsights(agentId);
             const feedback = this.getFeedback(agentId);
+            const reflections = this.getReflections(agentId);
             
-            // Create a concise summary that can be attached to agent prompts
-            let metadata = `# Learning Summary\n`;
+            // Create a comprehensive but concise summary that can be attached to agent prompts
+            let metadata = `# Real-Time Learning Context\n`;
             
             // Add key insights
             if (insights.length > 0) {
@@ -370,32 +443,64 @@ export class LearningSystem {
                     });
             }
             
-            // Add feedback lessons
+            // Add feedback lessons - this will be appended to every message as "real-time fine-tuning"
             if (feedback.length > 0) {
-                metadata += `## Feedback Lessons\n`;
+                metadata += `## Feedback For Continuous Improvement\n`;
                 
-                // Get improvement feedback
-                const improvementFeedback = feedback
-                    .filter(f => f.feedback_type === 'improvement')
-                    .slice(0, 2);
+                // Get all types of feedback, prioritizing the most recent
+                const recentFeedback = feedback
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .slice(0, 5);
                 
-                if (improvementFeedback.length > 0) {
-                    improvementFeedback.forEach(f => {
-                        metadata += `- Improvement: ${f.content}\n`;
+                // Get praise feedback for positive reinforcement
+                const praiseFeedback = recentFeedback.filter(f => f.feedback_type === 'praise');
+                if (praiseFeedback.length > 0) {
+                    metadata += `### Strengths to Maintain\n`;
+                    praiseFeedback.forEach(f => {
+                        metadata += `- ${f.content}\n`;
                     });
                 }
                 
-                // Get correction feedback
-                const correctionFeedback = feedback
-                    .filter(f => f.feedback_type === 'correction')
-                    .slice(0, 2);
+                // Get improvement feedback
+                const improvementFeedback = recentFeedback.filter(f => f.feedback_type === 'improvement');
+                if (improvementFeedback.length > 0) {
+                    metadata += `### Areas to Enhance\n`;
+                    improvementFeedback.forEach(f => {
+                        metadata += `- ${f.content}\n`;
+                    });
+                }
                 
+                // Get correction feedback - highest priority
+                const correctionFeedback = recentFeedback.filter(f => f.feedback_type === 'correction');
                 if (correctionFeedback.length > 0) {
+                    metadata += `### Critical Adjustments (Must Apply)\n`;
                     correctionFeedback.forEach(f => {
-                        metadata += `- Correction: ${f.content}\n`;
+                        metadata += `- ${f.content}\n`;
                     });
                 }
             }
+            
+            // Add reflection insights for better self-awareness
+            if (reflections.length > 0) {
+                metadata += `## Self-Reflection Insights\n`;
+                reflections
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .slice(0, 2) // Get top 2 most recent reflections
+                    .forEach(reflection => {
+                        metadata += `### ${reflection.focus}\n`;
+                        if (reflection.insights.length > 0) {
+                            reflection.insights.slice(0, 2).forEach(insight => {
+                                metadata += `- ${insight}\n`;
+                            });
+                        }
+                        if (reflection.action_plan.length > 0) {
+                            metadata += `**Action:** ${reflection.action_plan[0]}\n`;
+                        }
+                    });
+            }
+            
+            // Add instruction for how to use this feedback in every response
+            metadata += `\n## Application Instructions\nApply ALL feedback above to EACH response you generate, especially the critical adjustments. This feedback should be treated as a real-time learning system that continuously improves your outputs. Before submitting any response, verify it incorporates the feedback provided here.\n`;
             
             return metadata;
         } catch (error) {

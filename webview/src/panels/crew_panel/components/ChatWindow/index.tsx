@@ -35,6 +35,18 @@ interface Attachment {
     metadata?: Record<string, any>;
 }
 
+// Interface for agent operations (activities the agent is performing)
+interface AgentOperation {
+    id: string;
+    type: 'thinking' | 'coding' | 'searching' | 'reading' | 'writing' | 'analyzing' | 'executing' | 'learning' | 'planning' | 'debugging';
+    description: string;
+    startTime: Date;
+    endTime?: Date;
+    progress?: number; // 0-100
+    status: 'in_progress' | 'completed' | 'failed';
+    metadata?: Record<string, any>;
+}
+
 // Enhanced Message interface to include thread, parent, and attachment info
 interface EnhancedMessage extends Message {
     threadId?: string;
@@ -44,6 +56,7 @@ interface EnhancedMessage extends Message {
     isTyping?: boolean;
     directTo?: string; // ID of the agent this message is directed to (for agent-to-agent messaging)
     recipientIds?: string[]; // IDs of multiple recipients for group messaging
+    currentOperation?: AgentOperation; // Current operation the agent is performing
 }
 
 // Define emojis for reactions
@@ -489,6 +502,94 @@ const ThreadView: React.FC<{
                 >
                     Reply
                 </button>
+            </div>
+        </div>
+    );
+};
+
+// Operation Indicator component for showing current agent operations
+export const OperationIndicator: React.FC<{ operation: AgentOperation | undefined }> = ({ operation }) => {
+    if (!operation) return null;
+    
+    // Define icon for each operation type
+    const getOperationIcon = (type: string) => {
+        switch (type) {
+            case 'thinking':
+                return '💭';
+            case 'coding':
+                return '👨‍💻';
+            case 'searching':
+                return '🔍';
+            case 'reading':
+                return '📖';
+            case 'writing':
+                return '✏️';
+            case 'analyzing':
+                return '🔬';
+            case 'executing':
+                return '🚀';
+            case 'learning':
+                return '🧠';
+            case 'planning':
+                return '📝';
+            case 'debugging':
+                return '🐛';
+            default:
+                return '⚙️';
+        }
+    };
+    
+    // Format operation type to readable format
+    const formatOperationType = (type: string) => {
+        return type.charAt(0).toUpperCase() + type.slice(1);
+    };
+    
+    // Format elapsed time
+    const formatElapsedTime = (startTime: Date) => {
+        const elapsed = new Date().getTime() - new Date(startTime).getTime();
+        
+        // If less than a minute, show seconds
+        if (elapsed < 60000) {
+            return `${Math.round(elapsed / 1000)}s`;
+        }
+        
+        // If less than an hour, show minutes
+        if (elapsed < 3600000) {
+            return `${Math.floor(elapsed / 60000)}m ${Math.round((elapsed % 60000) / 1000)}s`;
+        }
+        
+        // Otherwise show hours and minutes
+        return `${Math.floor(elapsed / 3600000)}h ${Math.floor((elapsed % 3600000) / 60000)}m`;
+    };
+    
+    return (
+        <div className="operation-indicator">
+            <div className="operation-icon">
+                {getOperationIcon(operation.type)}
+            </div>
+            <div className="operation-details">
+                <div className="operation-type">
+                    {formatOperationType(operation.type)}
+                </div>
+                <div className="operation-description">
+                    {operation.description}
+                </div>
+                {operation.progress !== undefined && (
+                    <div className="operation-progress">
+                        <div className="progress-bar">
+                            <div 
+                                className="progress-fill" 
+                                style={{ width: `${operation.progress}%` }}
+                            />
+                        </div>
+                        <div className="progress-text">
+                            {operation.progress}%
+                        </div>
+                    </div>
+                )}
+                <div className="operation-time">
+                    {formatElapsedTime(operation.startTime)}
+                </div>
             </div>
         </div>
     );
@@ -972,6 +1073,13 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                         </>
                     )}
                     
+                    {/* Operation Indicator - shows current agent operations */}
+                    {messages.find(m => m.currentOperation) && (
+                        <OperationIndicator 
+                            operation={messages.find(m => m.currentOperation)?.currentOperation} 
+                        />
+                    )}
+                
                     {/* Loading indicator - positioned inside the messages container */}
                     {loadingAgent && (
                         <div className="loading-indicator-container">

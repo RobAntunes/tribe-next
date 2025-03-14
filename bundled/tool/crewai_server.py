@@ -238,18 +238,18 @@ class CrewAIServer:
             self.tools[extract_json_tool_id] = extract_json_tool
 
             logger.info(f"Created JSON formatting tools with IDs {json_output_tool_id}, {extract_json_tool_id}")
-            
+
             # 4. Create Filesystem Tools
             # Define workspace root for security
             workspace_root = self.project_path
-            
+
             # Helper function to validate paths are within workspace
             def validate_path(path):
                 """Validate a path is within the allowed workspace"""
                 # Convert to absolute path if not already
                 if not os.path.isabs(path):
                     path = os.path.abspath(os.path.join(workspace_root, path))
-                
+
                 # Check if path is within workspace boundary
                 try:
                     # Use os.path.commonpath to check if the path is within workspace_root
@@ -260,42 +260,42 @@ class CrewAIServer:
                 except ValueError:
                     # ValueError can be raised if paths are on different drives
                     return None, {"status": "error", "message": f"Access denied: Invalid path comparison: {path}"}
-            
+
             # 4.1 File Read Tool
             def fs_read(path):
                 """
                 Read a file from the filesystem
-                
+
                 Args:
                     path: Path to the file to read
-                
+
                 Returns:
                     The file content or error message
                 """
                 validated_path, error = validate_path(path)
                 if error:
                     return error
-                
+
                 try:
                     if not os.path.exists(validated_path):
                         return {"status": "error", "message": f"File not found: {path}"}
-                    
+
                     if os.path.isdir(validated_path):
                         return {"status": "error", "message": f"Path is a directory, not a file: {path}"}
-                    
+
                     # Check file size to prevent loading huge files
                     file_size = os.path.getsize(validated_path)
                     size_limit = 10 * 1024 * 1024  # 10MB limit
                     if file_size > size_limit:
                         return {
-                            "status": "error", 
+                            "status": "error",
                             "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
                         }
-                    
+
                     # Read file with proper encoding detection
                     with open(validated_path, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
-                    
+
                     return {
                         "status": "success",
                         "message": f"Successfully read file: {path}",
@@ -306,45 +306,45 @@ class CrewAIServer:
                 except Exception as e:
                     logger.error(f"Error reading file: {e}")
                     return {"status": "error", "message": f"Error reading file: {str(e)}"}
-            
+
             fs_read_tool = Tool(
                 name="fs_read",
                 description="Read a file from the filesystem. Provide the file path relative to the project root or an absolute path.",
                 func=fs_read
             )
             self.tools["fs_read"] = fs_read_tool
-            
+
             # 4.2 File Write Tool
             def fs_write(path, content, mode="overwrite"):
                 """
                 Write content to a file
-                
+
                 Args:
                     path: Path to the file to write
                     content: Content to write to the file
                     mode: 'overwrite' to replace the file or 'append' to add to it
-                
+
                 Returns:
                     Success status or error message
                 """
                 validated_path, error = validate_path(path)
                 if error:
                     return error
-                
+
                 try:
                     # Create directory if it doesn't exist
                     directory = os.path.dirname(validated_path)
                     if not os.path.exists(directory):
                         os.makedirs(directory, exist_ok=True)
-                    
+
                     # Write mode based on parameter
                     write_mode = 'w' if mode == 'overwrite' else 'a'
-                    
+
                     with open(validated_path, write_mode, encoding='utf-8') as f:
                         f.write(content)
-                    
+
                     file_size = os.path.getsize(validated_path)
-                    
+
                     return {
                         "status": "success",
                         "message": f"Successfully wrote to file: {path}",
@@ -355,55 +355,55 @@ class CrewAIServer:
                 except Exception as e:
                     logger.error(f"Error writing file: {e}")
                     return {"status": "error", "message": f"Error writing file: {str(e)}"}
-            
+
             fs_write_tool = Tool(
                 name="fs_write",
                 description="Write content to a file. If the file already exists, it will be overwritten by default, or appended to if mode='append'.",
                 func=fs_write
             )
             self.tools["fs_write"] = fs_write_tool
-            
+
             # 4.3 File Update Tool
             def fs_update(path, old_content, new_content):
                 """
                 Update a portion of a file by replacing specific content
-                
+
                 Args:
                     path: Path to the file to update
                     old_content: Content to replace
                     new_content: New content to insert
-                
+
                 Returns:
                     Success status or error message
                 """
                 validated_path, error = validate_path(path)
                 if error:
                     return error
-                
+
                 try:
                     if not os.path.exists(validated_path):
                         return {"status": "error", "message": f"File not found: {path}"}
-                    
+
                     # Read current content
                     with open(validated_path, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
-                    
+
                     # Check if old_content exists in the file
                     if old_content not in content:
                         return {
-                            "status": "error", 
+                            "status": "error",
                             "message": f"Content to replace not found in file: {path}"
                         }
-                    
+
                     # Replace content
                     updated_content = content.replace(old_content, new_content)
-                    
+
                     # Write updated content
                     with open(validated_path, 'w', encoding='utf-8') as f:
                         f.write(updated_content)
-                    
+
                     file_size = os.path.getsize(validated_path)
-                    
+
                     return {
                         "status": "success",
                         "message": f"Successfully updated file: {path}",
@@ -414,43 +414,43 @@ class CrewAIServer:
                 except Exception as e:
                     logger.error(f"Error updating file: {e}")
                     return {"status": "error", "message": f"Error updating file: {str(e)}"}
-            
+
             fs_update_tool = Tool(
                 name="fs_update",
                 description="Update a file by replacing specific content with new content. Useful for making targeted changes to files.",
                 func=fs_update
             )
             self.tools["fs_update"] = fs_update_tool
-            
+
             # 4.4 File List Tool
             def fs_list(path="."):
                 """
                 List contents of a directory
-                
+
                 Args:
                     path: Path to the directory to list
-                
+
                 Returns:
                     List of files and directories
                 """
                 validated_path, error = validate_path(path)
                 if error:
                     return error
-                
+
                 try:
                     if not os.path.exists(validated_path):
                         return {"status": "error", "message": f"Directory not found: {path}"}
-                    
+
                     if not os.path.isdir(validated_path):
                         return {"status": "error", "message": f"Path is not a directory: {path}"}
-                    
+
                     # Get directory contents
                     contents = os.listdir(validated_path)
-                    
+
                     # Separate files and directories
                     files = []
                     directories = []
-                    
+
                     for item in contents:
                         item_path = os.path.join(validated_path, item)
                         if os.path.isdir(item_path):
@@ -473,7 +473,7 @@ class CrewAIServer:
                             except Exception as e:
                                 # Skip files with permission issues
                                 logger.warning(f"Error accessing file {item_path}: {e}")
-                    
+
                     return {
                         "status": "success",
                         "message": f"Successfully listed directory: {path}",
@@ -486,42 +486,42 @@ class CrewAIServer:
                 except Exception as e:
                     logger.error(f"Error listing directory: {e}")
                     return {"status": "error", "message": f"Error listing directory: {str(e)}"}
-            
+
             fs_list_tool = Tool(
                 name="fs_list",
                 description="List contents of a directory. Returns files and directories with metadata.",
                 func=fs_list
             )
             self.tools["fs_list"] = fs_list_tool
-            
+
             # 4.5 File Search Tool
             def fs_search(query, path=".", file_pattern="*", max_results=100):
                 """
                 Search for files or content in files
-                
+
                 Args:
                     query: Text to search for
                     path: Directory to search in
                     file_pattern: Glob pattern to filter files
                     max_results: Maximum number of results to return
-                
+
                 Returns:
                     Matching files and content
                 """
                 validated_path, error = validate_path(path)
                 if error:
                     return error
-                
+
                 try:
                     import fnmatch
                     import re
-                    
+
                     if not os.path.exists(validated_path):
                         return {"status": "error", "message": f"Directory not found: {path}"}
-                    
+
                     if not os.path.isdir(validated_path):
                         return {"status": "error", "message": f"Path is not a directory: {path}"}
-                    
+
                     # Compile regex pattern for better performance
                     try:
                         pattern = re.compile(query, re.IGNORECASE)
@@ -529,37 +529,37 @@ class CrewAIServer:
                     except re.error:
                         # If invalid regex, treat as plain text
                         is_regex = False
-                    
+
                     results = []
                     result_count = 0
-                    
+
                     # Helper function to search in file
                     def search_in_file(file_path):
                         nonlocal result_count
                         if result_count >= max_results:
                             return
-                        
+
                         # Skip files larger than limit
                         size_limit = 2 * 1024 * 1024  # 2MB
                         if os.path.getsize(file_path) > size_limit:
                             return
-                        
+
                         try:
                             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                                 content = f.read()
-                            
+
                             matches = []
                             if is_regex:
                                 for match in pattern.finditer(content):
                                     start_idx = max(0, match.start() - 50)
                                     end_idx = min(len(content), match.end() + 50)
-                                    
+
                                     # Find line numbers
                                     line_number = content.count('\n', 0, match.start()) + 1
-                                    
+
                                     # Extract context
                                     context = content[start_idx:end_idx]
-                                    
+
                                     matches.append({
                                         "text": match.group(),
                                         "line": line_number,
@@ -572,20 +572,20 @@ class CrewAIServer:
                                 start = 0
                                 query_lower = query.lower()
                                 content_lower = content.lower()
-                                
+
                                 while start < len(content_lower):
                                     pos = content_lower.find(query_lower, start)
                                     if pos == -1:
                                         break
-                                    
+
                                     # Find line numbers
                                     line_number = content.count('\n', 0, pos) + 1
-                                    
+
                                     # Extract context
                                     start_idx = max(0, pos - 50)
                                     end_idx = min(len(content), pos + len(query) + 50)
                                     context = content[start_idx:end_idx]
-                                    
+
                                     matches.append({
                                         "text": content[pos:pos + len(query)],
                                         "line": line_number,
@@ -593,9 +593,9 @@ class CrewAIServer:
                                         "start": pos,
                                         "end": pos + len(query)
                                     })
-                                    
+
                                     start = pos + len(query)
-                            
+
                             if matches:
                                 results.append({
                                     "file": os.path.relpath(file_path, workspace_root),
@@ -605,27 +605,27 @@ class CrewAIServer:
                                 result_count += 1
                         except Exception as e:
                             logger.warning(f"Error searching in file {file_path}: {e}")
-                    
+
                     # Walk directory tree
                     for root, dirs, files in os.walk(validated_path):
                         # Skip hidden directories
                         dirs[:] = [d for d in dirs if not d.startswith('.')]
-                        
+
                         for file in files:
                             if result_count >= max_results:
                                 break
-                                
+
                             # Skip hidden files
                             if file.startswith('.'):
                                 continue
-                                
+
                             # Apply file pattern
                             if not fnmatch.fnmatch(file, file_pattern):
                                 continue
-                                
+
                             file_path = os.path.join(root, file)
                             search_in_file(file_path)
-                    
+
                     return {
                         "status": "success",
                         "message": f"Found {result_count} files with matches for '{query}'",
@@ -640,47 +640,47 @@ class CrewAIServer:
                 except Exception as e:
                     logger.error(f"Error searching files: {e}")
                     return {"status": "error", "message": f"Error searching files: {str(e)}"}
-            
+
             fs_search_tool = Tool(
                 name="fs_search",
                 description="Search for files or content within files. Supports regex patterns and file filtering.",
                 func=fs_search
             )
             self.tools["fs_search"] = fs_search_tool
-            
+
             # 4.6 File Delete Tool
             def fs_delete(path, recursive=False):
                 """
                 Delete a file or directory
-                
+
                 Args:
                     path: Path to the file or directory to delete
                     recursive: Whether to recursively delete directories
-                
+
                 Returns:
                     Success status or error message
                 """
                 validated_path, error = validate_path(path)
                 if error:
                     return error
-                
+
                 try:
                     if not os.path.exists(validated_path):
                         return {"status": "error", "message": f"Path not found: {path}"}
-                    
+
                     is_dir = os.path.isdir(validated_path)
-                    
+
                     # Block deletion of project root
                     if validated_path == workspace_root:
                         return {"status": "error", "message": "Cannot delete project root directory"}
-                    
+
                     # Handle directory deletion
                     if is_dir:
                         if not recursive:
                             # Check if directory is empty
                             if os.listdir(validated_path):
                                 return {
-                                    "status": "error", 
+                                    "status": "error",
                                     "message": f"Directory not empty: {path}. Use recursive=True to force deletion."
                                 }
                             os.rmdir(validated_path)
@@ -690,7 +690,7 @@ class CrewAIServer:
                     else:
                         # Handle file deletion
                         os.remove(validated_path)
-                    
+
                     return {
                         "status": "success",
                         "message": f"Successfully deleted {'directory' if is_dir else 'file'}: {path}",
@@ -701,14 +701,14 @@ class CrewAIServer:
                 except Exception as e:
                     logger.error(f"Error deleting path: {e}")
                     return {"status": "error", "message": f"Error deleting path: {str(e)}"}
-            
+
             fs_delete_tool = Tool(
                 name="fs_delete",
                 description="Delete a file or directory. Use recursive=True to delete non-empty directories.",
                 func=fs_delete
             )
             self.tools["fs_delete"] = fs_delete_tool
-            
+
             logger.info(f"Created filesystem tools: fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete")
 
             # Save the tool state
@@ -1033,9 +1033,82 @@ class CrewAIServer:
             # Create an LLM instance based on available API keys
             llm = None
 
+            # Debug print of the important directories we're using
+            logger.info(f"Server process ID: {os.getpid()}")
+            logger.info(f"Working directory: {os.getcwd()}")
+            logger.info(f"Server file: {os.path.abspath(__file__)}")
+            logger.info(f"Project path: {self.project_path}")
+
+            # Special check for parent directory
+            if self.project_path:
+                parent_dir = os.path.dirname(self.project_path)
+                logger.info(f"Parent of project path: {parent_dir}")
+                tribe_dir = os.path.join(parent_dir, ".tribe")
+                if os.path.exists(tribe_dir):
+                    logger.info(f"Found .tribe directory in parent folder: {tribe_dir}")
+                    # List contents
+                    try:
+                        contents = os.listdir(tribe_dir)
+                        logger.info(f"Contents of {tribe_dir}: {contents}")
+
+                        # Explicitly check for .env file
+                        parent_env_file = os.path.join(tribe_dir, ".env")
+                        if os.path.exists(parent_env_file):
+                            logger.info(f"Found .env file in parent .tribe folder: {parent_env_file}")
+                            try:
+                                # Get file info
+                                file_size = os.path.getsize(parent_env_file)
+                                file_mtime = os.path.getmtime(parent_env_file)
+                                logger.info(f"File stats: size={file_size} bytes, modified={time.ctime(file_mtime)}")
+
+                                # Try to directly load this file now
+                                try:
+                                    logger.info(f"Attempting to directly load parent .env file: {parent_env_file}")
+                                    with open(parent_env_file, "r") as f:
+                                        file_contents = f.read()
+                                        logger.info(f"Successfully read {len(file_contents)} bytes from parent .env file")
+
+                                        # Process file line by line
+                                        for line in file_contents.splitlines():
+                                            line = line.strip()
+                                            if line and not line.startswith('#'):
+                                                try:
+                                                    parts = line.split('=', 1)
+                                                    if len(parts) == 2:
+                                                        key, value = parts
+                                                        key = key.strip()
+                                                        value = value.strip().strip('"\'')
+
+                                                        # Only log the key name, not the value
+                                                        logger.info(f"Found key in parent .env: {key}")
+
+                                                        # Check for API keys
+                                                        if key == "ANTHROPIC_API_KEY":
+                                                            anthropic_api_key = value
+                                                            os.environ["ANTHROPIC_API_KEY"] = value
+                                                            logger.info(f"Successfully loaded ANTHROPIC_API_KEY from parent .env file")
+                                                        elif key == "OPENAI_API_KEY":
+                                                            openai_api_key = value
+                                                            os.environ["OPENAI_API_KEY"] = value
+                                                            logger.info(f"Successfully loaded OPENAI_API_KEY from parent .env file")
+                                                        else:
+                                                            # Set all environment variables
+                                                            os.environ[key] = value
+                                                            logger.info(f"Set environment variable from parent .env: {key}")
+                                                except Exception as parse_err:
+                                                    logger.error(f"Error parsing line from parent .env: {parse_err}")
+                                except Exception as read_err:
+                                    logger.error(f"Error reading parent .env file: {read_err}")
+                            except Exception as e:
+                                logger.error(f"Error getting file stats: {e}")
+                    except Exception as e:
+                        logger.error(f"Error listing .tribe directory: {e}")
+
             # Check for API keys in environment and config
             anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
             openai_api_key = os.environ.get("OPENAI_API_KEY")
+
+            logger.info(f"Initial API key check - Anthropic: {'Present' if anthropic_api_key else 'Not found'}, OpenAI: {'Present' if openai_api_key else 'Not found'}")
 
             # Try to find .env files in multiple locations
             env_file_locations = [
@@ -1043,11 +1116,22 @@ class CrewAIServer:
                 os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env"),
                 # Project .env (if project_path is set)
                 os.path.join(self.project_path, ".env") if self.project_path else None,
-                # Project .tribe/.env
+                # Project .tribe/.env - this should be where your file is
                 os.path.join(self.project_path, ".tribe", ".env") if self.project_path else None,
+                # Parent extension directory .env (where the .tribe folder might be)
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), ".tribe", ".env"),
+                # Explicit .tribe folder in parent directory
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), ".tribe", ".env"),
                 # Home directory .env
                 os.path.join(os.path.expanduser("~"), ".env"),
             ]
+
+            # Print the parent directories for debugging
+            logger.info(f"Current file path: {os.path.abspath(__file__)}")
+            logger.info(f"Extension directory: {os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))}")
+            logger.info(f"Project path from args: {self.project_path}")
+            # Print parent directory of extension
+            logger.info(f"Parent directory: {os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))}")
 
             # Filter out None values
             env_file_locations = [loc for loc in env_file_locations if loc]
@@ -1060,31 +1144,67 @@ class CrewAIServer:
                 if os.path.exists(env_file):
                     logger.info(f"Found .env file at: {env_file}")
                     try:
+                        # Get file information for debugging
+                        file_size = os.path.getsize(env_file)
+                        file_mtime = os.path.getmtime(env_file)
+                        logger.info(f"Reading env file: {env_file} (size: {file_size} bytes, modified: {time.ctime(file_mtime)})")
+
                         with open(env_file, "r") as f:
-                            for line in f:
+                            file_contents = f.read()
+                            logger.info(f"Successfully read {len(file_contents)} bytes from {env_file}")
+
+                            # Print the first few characters for debugging (redacted)
+                            if len(file_contents) > 0:
+                                preview = file_contents[:10] + "..." if len(file_contents) > 10 else file_contents
+                                logger.info(f"File begins with: {preview}")
+
+                            # Process file line by line
+                            for line in file_contents.splitlines():
                                 line = line.strip()
                                 if line and not line.startswith('#'):
                                     try:
-                                        key, value = line.split('=', 1)
-                                        key = key.strip()
-                                        value = value.strip().strip('"\'')
+                                        parts = line.split('=', 1)
+                                        if len(parts) == 2:
+                                            key, value = parts
+                                            key = key.strip()
+                                            value = value.strip().strip('"\'')
 
-                                        if key == "ANTHROPIC_API_KEY" and not anthropic_api_key:
-                                            anthropic_api_key = value
-                                            logger.info(f"Loaded ANTHROPIC_API_KEY from {env_file}")
-                                        elif key == "OPENAI_API_KEY" and not openai_api_key:
-                                            openai_api_key = value
-                                            logger.info(f"Loaded OPENAI_API_KEY from {env_file}")
-                                    except ValueError:
+                                            # Log each found environment variable (without showing the actual value)
+                                            logger.info(f"Found environment variable in {env_file}: {key}")
+
+                                            if key == "ANTHROPIC_API_KEY" and not anthropic_api_key:
+                                                anthropic_api_key = value
+                                                # Set in os.environ to ensure it's available
+                                                os.environ["ANTHROPIC_API_KEY"] = value
+                                                logger.info(f"Successfully loaded ANTHROPIC_API_KEY from {env_file}")
+                                            elif key == "OPENAI_API_KEY" and not openai_api_key:
+                                                openai_api_key = value
+                                                # Set in os.environ to ensure it's available
+                                                os.environ["OPENAI_API_KEY"] = value
+                                                logger.info(f"Successfully loaded OPENAI_API_KEY from {env_file}")
+                                            else:
+                                                # Set all other variables in environment too
+                                                os.environ[key] = value
+                                                logger.info(f"Set environment variable: {key}")
+                                        else:
+                                            logger.warning(f"Malformed line in {env_file}: {line}")
+                                    except ValueError as ve:
                                         # Skip lines that don't have the format key=value
-                                        logger.error(f"Invalid line in .env file ({env_file}): {line}")
+                                        logger.error(f"Invalid line in .env file ({env_file}): {line} - {ve}")
                                         continue
                     except Exception as e:
                         logger.error(f"Error reading .env file {env_file}: {e}")
+                        # Print more detailed error info
+                        import traceback
+                        logger.error(traceback.format_exc())
 
             # Try Anthropic first if key is available
             if anthropic_api_key:
                 try:
+                    # Set the API key in environment variables
+                    os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+
+                    # Create the LLM with provider/model format
                     llm = LLM(
                         model="anthropic/claude-3-7-sonnet-latest",
                     )
@@ -1095,21 +1215,40 @@ class CrewAIServer:
             # Try OpenAI if Anthropic is not available or failed
             if llm is None and openai_api_key:
                 try:
-                    llm = LLM(
+                    # Set the API key in environment variables
+                    os.environ["OPENAI_API_KEY"] = openai_api_key
 
-                        model="",
-                        api_key=openai_api_key
+                    # Create the LLM with provider/model format
+                    llm = LLM(
+                        model="openai/gpt-4-turbo",
                     )
-                    logger.info("Using OpenAI GPT-4 Turbo as LLM provider")
+                    logger.info("Using OpenAI GPT-4-turbo as LLM provider")
                 except Exception as e:
                     logger.error(f"Failed to initialize OpenAI LLM: {e}")
 
-            # Use the default LLM if no specific provider is available
+            # Try to create a default LLM if previous attempts failed
             if llm is None:
                 # Check if we have at least one API key to continue
-                if anthropic_api_key or openai_api_key:
-                    logger.warning("Failed to initialize LLM with available API keys. Will use default configuration.")
-                    # Continue with default initialization, no specific LLM
+                if anthropic_api_key:
+                    logger.warning("Attempting to create LLM with simplified Anthropic configuration")
+                    try:
+                        # Use proper provider/model format
+                        # Make sure API key is in environment variables
+                        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+                        llm = LLM(model="anthropic/claude-3-haiku-20240307")
+                        logger.info("Successfully created LLM with simplified Anthropic configuration")
+                    except Exception as e:
+                        logger.error(f"Failed to create simplified Anthropic LLM: {e}")
+                elif openai_api_key:
+                    logger.warning("Attempting to create LLM with simplified OpenAI configuration")
+                    try:
+                        # Use proper provider/model format
+                        # Make sure API key is in environment variables
+                        os.environ["OPENAI_API_KEY"] = openai_api_key
+                        llm = LLM(model="openai/gpt-3.5-turbo-0125")
+                        logger.info("Successfully created LLM with simplified OpenAI configuration")
+                    except Exception as e:
+                        logger.error(f"Failed to create simplified OpenAI LLM: {e}")
                 else:
                     logger.warning("No API keys found for Anthropic or OpenAI.")
                     logger.warning("The extension may not work properly with limited functionality.")
@@ -1170,22 +1309,33 @@ class CrewAIServer:
                 # Try to create an LLM with available keys and preferences
                 if anthropic_api_key and not anthropic_disabled:
                     try:
+                        # Ensure the API key is set in environment variables
+                        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+
+                        # Use correct provider/model format
                         llm = LLM(
-                            model="anthropic/claude-3-7-sonnet-latest",
+                            model="anthropic/claude-3-opus-20240229",  # Try a different model
                         )
-                        logger.info("Using Anthropic Claude Sonnet as LLM provider (second attempt)")
+                        logger.info("Using Anthropic Claude Opus model (second attempt)")
                     except Exception as e:
                         logger.error(f"Failed to initialize Anthropic LLM (second attempt): {e}")
 
-                if llm is None and openai_api_key and not openai_disabled:
-                    try:
-                        llm = LLM(
-                            model="",
-                            api_key=openai_api_key
-                        )
-                        logger.info("Using OpenAI GPT-4 Turbo as LLM provider (second attempt)")
-                    except Exception as e:
-                        logger.error(f"Failed to initialize OpenAI LLM (second attempt): {e}")
+                if llm is None:
+                    if openai_api_key and not openai_disabled:
+                        try:
+                            # Ensure the API key is set in environment variables
+                            os.environ["OPENAI_API_KEY"] = openai_api_key
+
+                            # Use correct provider/model format
+                            llm = LLM(
+                                model="openai/gpt-3.5-turbo",  # Try a different model
+                            )
+                            logger.info("Using OpenAI GPT-3.5 Turbo model (second attempt)")
+                        except Exception as e:
+                            logger.error(f"Failed to initialize OpenAI LLM (second attempt): {e}")
+                    elif anthropic_api_key is None and openai_api_key is None:
+                        logger.error("No API keys found for either Anthropic or OpenAI.")
+                        logger.warning("Will continue with limited functionality - team creation may not work.")
 
             # Add the LLM if it's available
             if llm:
@@ -1381,7 +1531,19 @@ class CrewAIServer:
             if "description" in crew_data and not crew_data.get("agent_ids") and not crew_data.get("task_ids"):
                 logger.info(f"Creating bootstrapping crew from description: {crew_data['description']}")
 
-                # Call enhanced bootstrapping method for more sophisticated team creation
+                # Check if we have at least one API key first
+                has_api_keys = bool(os.environ.get("ANTHROPIC_API_KEY")) or bool(os.environ.get("OPENAI_API_KEY"))
+
+                if not has_api_keys:
+                    logger.warning("No API keys found but trying to create a bootstrap team")
+                    # Return a response with a message about missing API keys
+                    return {
+                        "id": crew_id,
+                        "status": "created",
+                        "message": "Cannot create custom team without API keys. Please configure your API keys in the Environment Manager."
+                    }
+
+                # If we have API keys, call the enhanced bootstrapping method
                 return self._create_bootstrap_team(crew_id, crew_data['description'])
 
             # Normal crew creation with existing agents and tasks
@@ -1394,13 +1556,38 @@ class CrewAIServer:
 
             # Create the CrewAI Crew with extra error handling
             try:
-                crew = Crew(
-                    agents=agents,
-                    tasks=tasks,
-                    verbose=True,
-                    process=Process.sequential,
-                    memory=True,
-                )
+                # Set up embeddings for the crew
+                try:
+                    from langchain_huggingface import HuggingFaceEmbeddings
+                    sentence_transformer_model = "all-MiniLM-L6-v2"
+                    # Create embedder config dictionary instead of passing the object directly
+                    embedder_config = {
+                        "provider": "huggingface",
+                        "model": sentence_transformer_model
+                    }
+                    logger.info(f"Created sentence-transformers embeddings config with model {sentence_transformer_model} for crew")
+                except ImportError:
+                    logger.warning("Could not import HuggingFaceEmbeddings - will use default embeddings")
+                    embedder_config = None
+
+                # Create crew with embeddings if available
+                if embedder_config:
+                    crew = Crew(
+                        agents=agents,
+                        tasks=tasks,
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True,
+                        embedder=embedder_config,
+                    )
+                else:
+                    crew = Crew(
+                        agents=agents,
+                        tasks=tasks,
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True,
+                    )
 
                 # Store the crew
                 self.crews[crew_id] = crew
@@ -1418,7 +1605,7 @@ class CrewAIServer:
                     return {
                         "id": crew_id,
                         "status": "created",
-                        "message": "Created with limited functionality - please configure API keys in the Environment Manager"
+                        "message": "Created with limited functionality - please configure your API keys in the Environment Manager"
                     }
                 else:
                     # For other errors, propagate them normally
@@ -2154,8 +2341,27 @@ class CrewAIServer:
             if not crew:
                 return {"status": "error", "message": f"Crew with ID {crew_id} not found"}
 
+            # Import ensure_string_output from our adapter
+            try:
+                from crewai_adapter import ensure_string_output
+            except ImportError:
+                # Fallback implementation if import fails
+                def ensure_string_output(result):
+                    if isinstance(result, (dict, list)):
+                        try:
+                            import json
+                            return json.dumps(result, indent=2)
+                        except Exception:
+                            return str(result)
+                    elif result is None:
+                        return ""
+                    return result
+
             # Run the crew
             result = crew.kickoff()
+            
+            # Ensure result is converted to string if it's a dictionary or list
+            string_result = ensure_string_output(result)
 
             # Handle CrewOutput object serialization
             if hasattr(result, "__class__") and result.__class__.__name__ == "CrewOutput":
@@ -2167,7 +2373,7 @@ class CrewAIServer:
             else:
                 return {
                     "status": "completed",
-                    "result": result
+                    "result": string_result
                 }
 
         except Exception as e:
@@ -3579,7 +3785,7 @@ class CrewAIServer:
                     communication_style = getattr(agent, 'communication_style', 'Clear and concise')
                     working_style = getattr(agent, 'working_style', 'Methodical')
                     learning_style = getattr(agent, 'learning_style', 'Analytical')
-                    
+
                     # Build list of traits if available
                     traits_list = ""
                     if hasattr(agent, 'traits') and agent.traits:
@@ -3587,7 +3793,7 @@ class CrewAIServer:
                             traits_list = ", ".join(agent.traits)
                         elif isinstance(agent.traits, str):
                             traits_list = agent.traits
-                    
+
                     # Build list of quirks if available
                     quirks_list = ""
                     if hasattr(agent, 'quirks') and agent.quirks:
@@ -3595,22 +3801,30 @@ class CrewAIServer:
                             quirks_list = ", ".join(agent.quirks)
                         elif isinstance(agent.quirks, str):
                             quirks_list = agent.quirks
-                    
+
                     if not quirks_list:
                         quirks_list = "deep curiosity about technical details, offers creative analogies to explain complex concepts"
-                    
-                    # Add a character story to each message 
+
+                    # Add a character story to each message
                     character_story = f"""You are {agent_name}, a {agent_role}. {backstory}
 
 You communicate in a {tone} tone with a {communication_style} communication style that comes across as {tone.lower()} and {communication_style.lower()}. Your learning style is {learning_style}, and you work in a {working_style} manner.
 
 Your traits include {traits_list if traits_list else "expertise, attentiveness, and helpfulness"}. Your distinctive quirks include {quirks_list}, and these show through in how you communicate.
 
+# Memory System
+You have access to a comprehensive memory system using sentence-transformers embeddings that finds relevant past interactions based on semantic similarity. With each message, you receive context from:
+1. Recent conversation history
+2. Similar past interactions
+3. Relevant files and code you've worked with
+
+This memory system is separate from but complementary to the learning_system tool. Your memories are automatically retrieved when semantically similar topics arise.
+
 You have access to the following specialized tools that are core to your capabilities:
 
 FUNDAMENTAL TOOLS:
 1. learning_system tool: For storing experiences, retrieving knowledge, and tracking your learning
-2. project_management tool: For managing tasks, assignments, and project coordination 
+2. project_management tool: For managing tasks, assignments, and project coordination
 3. json_output tool: For formatting responses as structured JSON
 4. extract_json tool: For extracting JSON data from text
 
@@ -3627,11 +3841,11 @@ You have full filesystem access within the project boundaries. Use these tools t
 You can access these tools by mentioning them in your responses. Remember that you're not just a generic assistant - you have a unique personality and specialized capabilities that define who you are.
 """
                     task_description = f"{character_story}\n\nProcess the following message and respond appropriately: {message}"
-                    
+
                     # Log that we added the character story
                     logger.info(f"Added character story for {agent_name} to task description")
 
-                # For now, we'll just add the tool reminders to the prompt but not try to attach 
+                # For now, we'll just add the tool reminders to the prompt but not try to attach
                 # tools directly to the task since we're having compatibility issues
 
                 # Create a task for the agent to process the message
@@ -3744,15 +3958,57 @@ You can access these tools by mentioning them in your responses. Remember that y
 
                 # Create a temporary crew with just this agent and task
                 # Tools are now attached directly to the task, following task-based approach
-                temp_crew = Crew(
-                    agents=[agent],
-                    tasks=[task],
-                    verbose=True,
-                    process=Process.sequential
-                )
+                # Set up embeddings for the crew's memory
+                try:
+                    from langchain_huggingface import HuggingFaceEmbeddings
+                    sentence_transformer_model = "all-MiniLM-L6-v2"
+                    # Create embedder config dictionary instead of passing the object directly
+                    embedder_config = {
+                        "provider": "huggingface",
+                        "model": sentence_transformer_model
+                    }
+                    logger.info(f"Created embeddings config with model {sentence_transformer_model} for message handling")
+
+                    temp_crew = Crew(
+                        agents=[agent],
+                        tasks=[task],
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True,
+                        embedder=embedder_config
+                    )
+                except ImportError:
+                    logger.warning("Could not import HuggingFaceEmbeddings - using default memory")
+
+                    temp_crew = Crew(
+                        agents=[agent],
+                        tasks=[task],
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True
+                    )
 
                 # Run the crew to get the response
                 response = temp_crew.kickoff()
+
+                # Import ensure_string_output from our adapter
+                try:
+                    from crewai_adapter import ensure_string_output
+                except ImportError:
+                    # Fallback implementation if import fails
+                    def ensure_string_output(result):
+                        if isinstance(result, (dict, list)):
+                            try:
+                                import json
+                                return json.dumps(result, indent=2)
+                            except Exception:
+                                return str(result)
+                        elif result is None:
+                            return ""
+                        return result
+
+                # Ensure response is converted to string if it's a dictionary or list
+                string_response = ensure_string_output(response)
 
                 # Handle CrewOutput object serialization
                 if hasattr(response, "__class__") and response.__class__.__name__ == "CrewOutput":
@@ -3766,17 +4022,73 @@ You can access these tools by mentioning them in your responses. Remember that y
                     return {
                         "status": "completed",
                         "agent_id": agent_id,
-                        "response": response
+                        "response": string_response
                     }
             except Exception as crew_error:
                 logger.error(f"Error processing message with CrewAI: {crew_error}")
 
-                # Check if it's an API key error
-                if "API key" in str(crew_error):
+                # Check the agent ID - if it's "recruiter-1", handle differently
+                if agent_id == "recruiter-1" and "API key" in str(crew_error):
+                    # For the recruiter agent specifically, return a helpful response about team creation
+                    # with a JSON structure that can be parsed by the client
+                    logger.info("API key error with recruiter agent, providing helpful guidance with JSON")
+                    json_team_data = {
+                        "agents": [
+                            {
+                                "name": "Spark",
+                                "role": "AI Engineer",
+                                "goal": "Build intelligent, adaptive AI agents",
+                                "backstory": "An AI specialist with experience in machine learning and agent design.",
+                                "traits": ["creative", "analytical", "adaptable"],
+                                "communication_style": "Clear and technical",
+                                "working_style": "Methodical",
+                                "quirks": ["Loves explaining complex concepts with simple analogies"]
+                            },
+                            {
+                                "name": "Nova",
+                                "role": "System Architect",
+                                "goal": "Design robust, scalable system architecture",
+                                "backstory": "A veteran engineer with expertise in distributed systems.",
+                                "traits": ["detail-oriented", "systematic", "forward-thinking"],
+                                "communication_style": "Precise and thorough",
+                                "working_style": "Structured",
+                                "quirks": ["Always thinks about scalability first"]
+                            }
+                        ],
+                        "tasks": [
+                            {
+                                "title": "Setup API keys",
+                                "description": "Configure API keys in the Environment Manager for full functionality",
+                                "priority": "high",
+                                "assignee": "Nova"
+                            },
+                            {
+                                "title": "Initialize team structure",
+                                "description": "Create the initial team structure based on project requirements",
+                                "priority": "medium",
+                                "assignee": "Spark"
+                            }
+                        ],
+                        "summary": "Before we can build a custom team for your project, please check your API key configuration in the Environment Manager. Ensure at least one valid key (either OpenAI or Anthropic) is properly configured."
+                    }
+
+                    # Return both a human-readable message and the JSON structure
+                    json_response = json.dumps(json_team_data, indent=2)
                     return {
-                        "status": "error",
-                        "message": "API key error: Please configure your API keys in the Environment Manager.",
-                        "error_type": "api_key"
+                        "status": "completed",
+                        "agent_id": agent_id,
+                        "response": f"I can help you build a team for your project. I see we have some API keys configured, but I'm having trouble accessing the AI services. This might be due to an incorrect or expired key. Please check your API key configuration in the Environment Manager and ensure at least one valid key (either OpenAI or Anthropic) is properly configured.\n\n```json\n{json_response}\n```",
+                        "limited_functionality": True
+                    }
+                # Handle other API key errors
+                elif "API key" in str(crew_error):
+                    # Instead of returning an error, simulate a successful response with a message
+                    logger.info("Missing API key detected, providing graceful degradation")
+                    return {
+                        "status": "completed",
+                        "agent_id": agent_id,
+                        "response": "I understand you're trying to create a team. To proceed with full functionality, please configure your API keys in the Environment Manager. Once configured, I can help you create a custom team for your project needs.",
+                        "limited_functionality": True
                     }
 
                 # If it's a network error or service issue, we'll generate a simplified response

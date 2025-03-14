@@ -680,6 +680,98 @@
     color: var(--tribe-warning);
 }
 
+/* Operation Indicator Styles */
+.operation-indicator {
+  display: flex;
+  align-items: center;
+  background-color: color-mix(in srgb, var(--vscode-editor-background) 95%, var(--tribe-info) 5%);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  animation: pulse 2s infinite;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.operation-icon {
+  font-size: 20px;
+  margin-right: var(--space-3);
+  min-width: 24px;
+  text-align: center;
+}
+
+.operation-details {
+  flex: 1;
+  overflow: hidden;
+}
+
+.operation-type {
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: var(--tribe-primary);
+}
+
+.operation-description {
+  font-size: var(--font-size-xs);
+  color: var(--vscode-foreground);
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: var(--space-1);
+}
+
+.operation-progress {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-1);
+}
+
+.progress-bar {
+  flex: 1;
+  height: 4px;
+  background-color: color-mix(in srgb, var(--vscode-editor-background) 90%, var(--tribe-info) 10%);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-right: var(--space-2);
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: var(--tribe-primary);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: var(--font-size-xs);
+  min-width: 36px;
+  text-align: right;
+  color: var(--tribe-primary);
+  opacity: 0.7;
+}
+
+.operation-time {
+  font-size: calc(var(--font-size-xs) - 1px);
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  margin-top: 2px;
+  text-align: right;
+}
+
+/* Animation for operation indicator */
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--tribe-primary) 20%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--tribe-primary) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--tribe-primary) 0%, transparent);
+  }
+}
+
 /* Enhanced code actions with diff preview */
 .code-action-button.preview-diff::before {
     content: "Preview Diff";

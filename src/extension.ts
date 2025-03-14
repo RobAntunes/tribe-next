@@ -682,9 +682,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             
             // Register command to handle SAVE_ENV_FILE
             context.subscriptions.push(
-                vscode.commands.registerCommand('mightydev.saveEnvFile', async (filePath: string, content: string) => {
+                vscode.commands.registerCommand('mightydev.saveEnvFile', async (payload) => {
                     try {
+                        // Get filePath and content from the payload object
+                        const filePath = payload?.filePath || '';
+                        const content = payload?.content || '';
+                        
                         if (!filePath) throw new Error('No file path specified');
+                        
+                        // Log the received payload for debugging
+                        traceInfo(`Saving env file: ${filePath} with content length: ${content.length}`);
                         
                         // Ensure the directory exists
                         const dirPath = path.dirname(filePath);

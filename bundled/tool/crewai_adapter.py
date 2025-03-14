@@ -151,6 +151,7 @@ try:
         - Character-like names and personalities
         - Stylistic properties
         - Metadata
+        - Memory and embeddings
         """
         def __init__(self, 
                      role: str, 
@@ -168,6 +169,29 @@ try:
                      **kwargs):
             # Use character_name as a fallback for name to maintain compatibility
             name_to_use = name or character_name or role
+            
+            # Always ensure memory is enabled
+            if 'memory' not in kwargs:
+                kwargs['memory'] = True
+                
+            # Set up sentence-transformers embeddings if not specified
+            if 'embedder' not in kwargs:
+                try:
+                    # Use sentence transformers for embeddings
+                    try:
+                        from langchain_huggingface import HuggingFaceEmbeddings
+                        sentence_transformer_model = "all-MiniLM-L6-v2"  # Lightweight model good for semantic search
+                        # Create embedder config dictionary instead of passing the object directly
+                        kwargs['embedder'] = {
+                            "provider": "huggingface",
+                            "model": sentence_transformer_model
+                        }
+                        logger.info(f"Initialized sentence-transformers embeddings config with model {sentence_transformer_model}")
+                    except ImportError:
+                        # Fall back to default embeddings
+                        logger.warning("Could not import HuggingFaceEmbeddings - will use default CrewAI embeddings")
+                except Exception as e:
+                    logger.warning(f"Error setting up embeddings: {str(e)} - will use default CrewAI embeddings")
             
             # Initialize the base Agent without passing name parameter
             # This avoids issues with older versions that don't accept name
@@ -221,24 +245,28 @@ try:
                 logger.info(f"Processing message for agent: {self.name}")
                 logger.info(f"User message: {message[:100]}..." if len(message) > 100 else f"User message: {message}")
                 
+                # Get the agent dictionary
+                agent_dict = self.__dict__
+                
                 # Log the complete system prompt so we can see if personality traits are included
-                if hasattr(self, "system_prompt") and isinstance(self.system_prompt, str):
-                    system_length = len(self.system_prompt)
+                system_prompt = agent_dict.get("system_prompt", "")
+                if isinstance(system_prompt, str) and system_prompt:
+                    system_length = len(system_prompt)
                     logger.info(f"System prompt length: {system_length} characters")
                     
                     # Log the first part of the system prompt
-                    first_part = self.system_prompt[:500] + "..." if system_length > 500 else self.system_prompt
+                    first_part = system_prompt[:500] + "..." if system_length > 500 else system_prompt
                     logger.info(f"System prompt (first part): {first_part}")
                     
                     # Log specifically if the character information section exists
-                    if "# Character Information" in self.system_prompt:
-                        char_info_idx = self.system_prompt.find("# Character Information")
-                        char_info_section = self.system_prompt[char_info_idx:char_info_idx+500] + "..." if system_length - char_info_idx > 500 else self.system_prompt[char_info_idx:]
+                    if "# Character Information" in system_prompt:
+                        char_info_idx = system_prompt.find("# Character Information")
+                        char_info_section = system_prompt[char_info_idx:char_info_idx+500] + "..." if system_length - char_info_idx > 500 else system_prompt[char_info_idx:]
                         logger.info(f"Character Information section: {char_info_section}")
                     else:
                         logger.warning("NO CHARACTER INFORMATION SECTION FOUND IN SYSTEM PROMPT!")
                 else:
-                    logger.warning("Agent does not have a system_prompt attribute or it's not a string!")
+                    logger.warning("Agent does not have a valid system_prompt!")
                 
                 # Call the parent class's _process_message method with the updated context
                 return super()._process_message(message, *args, **kwargs)
@@ -257,14 +285,37 @@ try:
                 # Force adding metadata regardless of current state
                 # Always apply personality and traits to each message
                 
-                if hasattr(self, "system_prompt"):
+                # Check if we can directly access system_prompt
+                try:
+                    # Try to access system_prompt to see if it exists
+                    if hasattr(self, "system_prompt"):
+                        has_system_prompt = True
+                    else:
+                        # Check if __dict__ contains system_prompt
+                        agent_dict = self.__dict__
+                        has_system_prompt = "system_prompt" in agent_dict
+                        
+                        # If not in __dict__, try to add it
+                        if not has_system_prompt:
+                            agent_dict["system_prompt"] = f"You are {self.name}, a {self.role}."
+                            has_system_prompt = True
+                except Exception as attr_err:
+                    logger.warning(f"Error checking system_prompt attribute: {attr_err}")
+                    # Create system_prompt in __dict__
+                    self.__dict__["system_prompt"] = f"You are {self.name}, a {self.role}."
+                    has_system_prompt = True
+                
+                # Now update the system prompt
+                agent_dict = self.__dict__
+                if has_system_prompt:
                     # Check if our special section is already in the prompt, if so, update it
-                    if "# Character Information" in self.system_prompt:
+                    system_prompt = agent_dict.get("system_prompt", "")
+                    if isinstance(system_prompt, str) and "# Character Information" in system_prompt:
                         # First save the original part of the prompt (before our additions)
-                        original_prompt = self.system_prompt.split("# Character Information")[0]
+                        original_prompt = system_prompt.split("# Character Information")[0]
                         
                         # Now set the system prompt to the original part
-                        self.system_prompt = original_prompt
+                        agent_dict["system_prompt"] = original_prompt
                         
                         # Re-add the personality section with current metadata
                         self._add_personality_to_prompt()
@@ -274,10 +325,8 @@ try:
                         self._add_personality_to_prompt()
                         logger.info(f"Added agent personality traits for {self.name}")
                 else:
-                    # If no system_prompt exists, create one with personality
-                    self.system_prompt = f"You are {self.name}, a {self.role}."
-                    self._add_personality_to_prompt()
-                    logger.info(f"Created new system prompt with personality traits for {self.name}")
+                    # If we couldn't establish a system_prompt, log it but don't fail
+                    logger.warning(f"Could not establish system_prompt for agent {self.name}")
             except Exception as e:
                 logger.error(f"Error ensuring metadata in prompt: {e}")
                 # Continue without updating if there's an error
@@ -295,7 +344,10 @@ try:
 
         def _add_personality_to_prompt(self):
             """Add personality metadata to the agent's system prompt"""
-            if hasattr(self, "system_prompt"):
+            try:
+                # Get agent dictionary
+                agent_dict = self.__dict__
+                
                 # Get agent name and role safely
                 agent_name = self.name
                 agent_role = self.role
@@ -355,16 +407,34 @@ Your learning style is {learning_style} and you work in a {working_style} manner
                 # Add a reminder about showing personality consistently
                 personality_section += "\n\nIMPORTANT: Make sure your responses consistently reflect your unique tone, traits, quirks, and communication style."
                 
+                # Add memory context reminder
+                personality_section += "\n\n# Memory System\nYou have access to a comprehensive memory system that stores your past interactions and knowledge. This memory system uses sentence-transformers embeddings to find relevant information based on semantic similarity. With each message, you automatically receive context from:\n1. Recent conversation history\n2. Similar past interactions\n3. Relevant files and code you've worked with\n\nYou should use this memory context to maintain continuity in conversations and leverage past knowledge to better assist users. This memory system is separate from but complementary to the learning system tool. Your memories are automatically retrieved when semantically similar topics arise, but you can also use the learning_system tool to explicitly store and retrieve knowledge."
+                
+                # Add tool awareness reminder
+                personality_section += "\n\n# Tool Awareness\nYou have access to multiple tools that extend your capabilities. Always be mindful of which tools are available to you, as they are core to your functionality. Use these tools appropriately to accomplish your goals and provide the best assistance possible."
+                
                 # Update the system prompt
-                if isinstance(self.system_prompt, str):
-                    self.system_prompt += personality_section
-                    
+                if "system_prompt" in agent_dict:
+                    current_prompt = agent_dict["system_prompt"]
+                    if isinstance(current_prompt, str):
+                        agent_dict["system_prompt"] = current_prompt + personality_section
+                    else:
+                        # If system_prompt exists but isn't a string, set it as a string
+                        agent_dict["system_prompt"] = f"You are {agent_name}, a {agent_role}." + personality_section
+                else:
+                    # If system_prompt doesn't exist, create it
+                    agent_dict["system_prompt"] = f"You are {agent_name}, a {agent_role}." + personality_section
+                
                 # Log the personality information being added
                 logger.info(f"Added personality information for {agent_name}: tone={tone}, style={communication_style}")
                 if traits and len(traits) > 0:
                     logger.info(f"Added traits for {agent_name}: {traits}")
                 if quirks and len(quirks) > 0:
                     logger.info(f"Added quirks for {agent_name}: {quirks}")
+                logger.info("Added memory system and tool awareness to system prompt")
+            except Exception as e:
+                logger.error(f"Error adding personality to prompt: {e}")
+                # Continue without updating if there's an error
         
         def to_dict(self) -> Dict[str, Any]:
             """Convert agent to a serializable dictionary"""
@@ -426,6 +496,26 @@ Your learning style is {learning_style} and you work in a {working_style} manner
             self.dependencies = dependencies or []
             self.metadata = metadata or {}
             self.task_id = metadata.get("id", None) if metadata else None
+            
+        # Override the execute method to ensure string output
+        def execute(self, *args, **kwargs):
+            """
+            Execute the task and ensure the result is properly formatted as a string
+            when that's what CrewAI expects for TaskOutput validation.
+            
+            Returns:
+                The result, converted to a string if it's a dictionary/list
+            """
+            try:
+                # Call the original execute method
+                result = super().execute(*args, **kwargs)
+                
+                # Ensure result is properly formatted as a string if needed
+                return ensure_string_output(result)
+            except Exception as e:
+                logger.error(f"Error executing task: {e}")
+                # Return error message as a string
+                return f"Error executing task: {str(e)}"
         
         def to_dict(self) -> Dict[str, Any]:
             """Convert task to a serializable dictionary"""
@@ -502,6 +592,75 @@ Your learning style is {learning_style} and you work in a {working_style} manner
         def __call__(self, *args, **kwargs):
             """Make the tool callable"""
             return self.func(*args, **kwargs)
+        
+        def result_as_answer(self, result: Any) -> str:
+            """
+            Format the result as a user-friendly answer.
+            This method is required by CrewAI 0.28.0+.
+            
+            Args:
+                result: The result from the tool invocation
+                
+            Returns:
+                A string representation of the result
+            """
+            # Handle different result types appropriately
+            if isinstance(result, (dict, list)):
+                try:
+                    import json
+                    return json.dumps(result, indent=2)
+                except Exception:
+                    pass
+            
+            # Default to string conversion
+            return str(result)
+            
+        def invoke(self, input_str: str = None, **kwargs) -> Any:
+            """
+            Invoke the tool on the given input string.
+            This method makes the tool compatible with newer CrewAI versions.
+            
+            Args:
+                input_str: The input string to process (optional)
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                The result of the tool invocation
+            """
+            # Handle case where input_str is not provided or empty
+            if input_str is None or input_str == "":
+                # Try to get input from kwargs
+                if "input" in kwargs:
+                    input_str = kwargs["input"]
+                elif "query" in kwargs:
+                    input_str = kwargs["query"]
+                elif "text" in kwargs:
+                    input_str = kwargs["text"]
+                elif "content" in kwargs:
+                    input_str = kwargs["content"]
+                elif len(kwargs) > 0:
+                    # Try to use the first kwargs value
+                    input_str = next(iter(kwargs.values()))
+                else:
+                    # Fallback to empty string if no input is provided
+                    input_str = ""
+            
+            # Call the function with the input
+            return self.func(input_str)
+        
+        def run(self, input_str: str = None, **kwargs) -> Any:
+            """
+            Run method for LangChain compatibility.
+            
+            Args:
+                input_str: The input string to process (optional)
+                **kwargs: Additional keyword arguments
+                
+            Returns:
+                The result of the tool invocation
+            """
+            # Get result using invoke and ensure it's a string if needed
+            return self.invoke(input_str, **kwargs)
         
         def to_dict(self) -> Dict[str, Any]:
             """Convert tool to a serializable dictionary"""
@@ -888,12 +1047,111 @@ Your learning style is {learning_style} and you work in a {working_style} manner
             result = self.invoke(input_str, **kwargs)
             return ensure_string_output(result)
     
+    # Shell Execution Tool for safely running shell commands
+    class ShellExecutionTool(Tool):
+        """
+        Tool for safely executing shell commands
+        with security constraints and timeout capabilities.
+        """
+        def __init__(self):
+            import os
+            import subprocess
+            import shlex
+            import re
+            
+            def shell_execute(command: str, **kwargs) -> str:
+                """
+                Execute a shell command with security constraints and return the output.
+                
+                Args:
+                    command: The command to execute
+                    **kwargs: Additional options like 'cwd', 'timeout', etc.
+                    
+                Returns:
+                    The command output with any errors
+                """
+                try:
+                    # Security checks
+                    if not command or not isinstance(command, str):
+                        return "Error: Command must be a non-empty string"
+                    
+                    # Check for dangerous patterns
+                    dangerous_patterns = [
+                        r"rm\s+-rf\s+/",
+                        r"sudo",
+                        r"chmod\s+777",
+                        r">\s*/dev/(null|sd[a-z])",
+                        r"dd\s+if=.*\s+of=/dev/sd[a-z]"
+                    ]
+                    
+                    for pattern in dangerous_patterns:
+                        if re.search(pattern, command):
+                            return f"Error: Command rejected for security reasons (matched dangerous pattern: {pattern})"
+                    
+                    # List of allowed commands - extend as needed with safe commands
+                    allowed_commands = {
+                        "ls", "dir", "cd", "pwd", "cat", "echo", "grep", "find",
+                        "python", "python3", "pip", "pip3", "npm", "node",
+                        "git", "mkdir", "touch", "rm", "cp", "mv", "diff"
+                    }
+                    
+                    # Extract base command
+                    base_command = shlex.split(command)[0]
+                    
+                    # Check if command is allowed
+                    if "/" in base_command or "\\" in base_command:
+                        # For path commands, extract the executable name
+                        base_command = os.path.basename(base_command)
+                    
+                    if base_command not in allowed_commands:
+                        return f"Error: Command '{base_command}' is not in the allowed list for security reasons"
+                    
+                    # Set execution options
+                    cwd = kwargs.get("cwd")
+                    timeout = kwargs.get("timeout", 30)  # Default 30 seconds timeout
+                    env = kwargs.get("env")
+                    
+                    # Execute the command
+                    logger.info(f"Executing shell command: {command}")
+                    process = subprocess.run(
+                        command,
+                        shell=True,
+                        cwd=cwd,
+                        env=env,
+                        timeout=timeout,
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    # Format and return the result
+                    result = f"Exit code: {process.returncode}\n\n"
+                    
+                    if process.stdout:
+                        result += f"STDOUT:\n{process.stdout}\n\n"
+                    
+                    if process.stderr:
+                        result += f"STDERR:\n{process.stderr}\n"
+                    
+                    return result.strip()
+                except subprocess.TimeoutExpired:
+                    return f"Error: Command timed out after {timeout} seconds"
+                except Exception as e:
+                    return f"Error executing command: {str(e)}"
+            
+            super().__init__(
+                name="shell_execute",
+                description="Execute shell commands safely with security constraints and timeout capabilities. "
+                           "Only safe, allowed commands are permitted.",
+                func=shell_execute
+            )
+
     # Register extended classes
     setattr(crewai, "ExtendedAgent", ExtendedAgent)
     setattr(crewai, "ExtendedTask", ExtendedTask)
     setattr(crewai, "Tool", Tool)
     setattr(crewai, "StructuredJSONOutputTool", StructuredJSONOutputTool)
     setattr(crewai, "ExtractJSONTool", ExtractJSONTool)
+    setattr(crewai, "ShellExecutionTool", ShellExecutionTool)
     
 except ImportError as e:
     logger.error(f"Failed to import CrewAI: {e}")
@@ -1286,6 +1544,24 @@ except ImportError as e:
             
         def __call__(self, *args, **kwargs):
             return f"Tool {self.name} called, but CrewAI is not properly installed."
+            
+        def result_as_answer(self, result):
+            """Format result as a user-friendly answer"""
+            try:
+                import json
+                if isinstance(result, (dict, list)):
+                    return json.dumps(result, indent=2)
+                return str(result)
+            except Exception:
+                return str(result)
+                
+        def invoke(self, input_str=None, **kwargs):
+            """Required for compatibility with newer CrewAI versions"""
+            return f"Tool {self.name} invoked, but CrewAI is not properly installed."
+            
+        def run(self, input_str=None, **kwargs):
+            """For LangChain compatibility"""
+            return f"Tool {self.name} run, but CrewAI is not properly installed."
             
         def to_dict(self):
             return {

@@ -1068,6 +1068,17 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                 async (progress) => {
                     progress.report({ increment: 0, message: "Deleting Tribe configuration..." });
                     
+                    // Save .env file paths to preserve them during reset
+                    let envFiles = [];
+                    try {
+                        const envManager = (await vscode.commands.executeCommand('tribe.getEnvironmentManager')) as any;
+                        if (envManager) {
+                            envFiles = envManager.scanEnvFiles();
+                        }
+                    } catch (err) {
+                        console.error("Error getting environment files before reset:", err);
+                    }
+                    
                     // Call server-side reset command to clean up storage
                     try {
                         const resetResult = await vscode.commands.executeCommand('tribe.resetStorage');
@@ -1083,12 +1094,24 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                         const workspaceFolder = workspaceFolders[0];
                         const tribeFolderPath = vscode.Uri.joinPath(workspaceFolder.uri, '.tribe');
                         
-                        // Delete the .tribe folder if it exists
+                        // Delete the .tribe folder if it exists, but preserve env files
                         try {
-                            await vscode.workspace.fs.delete(tribeFolderPath, { recursive: true });
-                            progress.report({ increment: 25, message: "Workspace .tribe folder deleted" });
+                            // Instead of deleting the whole folder, selectively delete files
+                            // while preserving .env files
+                            const files = await vscode.workspace.fs.readDirectory(tribeFolderPath);
+                            for (const [name, type] of files) {
+                                // Skip .env files
+                                if (name.endsWith('.env')) {
+                                    continue;
+                                }
+                                
+                                // Delete everything else
+                                const filePath = vscode.Uri.joinPath(tribeFolderPath, name);
+                                await vscode.workspace.fs.delete(filePath, { recursive: true });
+                            }
+                            progress.report({ increment: 25, message: "Workspace .tribe folder reset (preserved env files)" });
                         } catch (err) {
-                            console.log("No workspace .tribe folder to delete or error deleting:", err);
+                            console.log("No workspace .tribe folder to reset or error resetting:", err);
                         }
                     }
 
@@ -1127,10 +1150,13 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                             payload: []
                         });
                         
-                        // Reset to initial view
+                        // Reset to initial view but keep ENV_MANAGER access
                         this._view.webview.postMessage({
                             type: 'RESET_TO_INITIAL',
-                            payload: { timestamp: Date.now() }
+                            payload: { 
+                                timestamp: Date.now(),
+                                preserveEnvManager: true  // Add flag to preserve env manager access
+                            }
                         });
                         
                         // Update general state
@@ -1140,7 +1166,7 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                     progress.report({ increment: 25, message: "Reset complete" });
                     
                     // Show success message
-                    vscode.window.showInformationMessage("Tribe has been reset successfully. Please reload if needed.");
+                    vscode.window.showInformationMessage("Tribe has been reset successfully while preserving environment settings.");
                 }
             );
         } catch (error) {

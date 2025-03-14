@@ -161,11 +161,14 @@ export const EnvironmentManager: React.FC<EnvironmentManagerProps> = ({ onSave }
       content += `${v.key}=${v.value}\n`;
     });
 
-    // Notify the extension to save the file
+    // Notify the extension to save the file - send a single object instead of array
     vscode.postMessage({
       type: 'COMMAND',
       command: 'mightydev.saveEnvFile',
-      payload: [selectedEnvFile || '.env', content]
+      payload: {
+        filePath: selectedEnvFile || '.env',
+        content: content
+      }
     });
     
     // If onSave prop is provided, call it
