@@ -34,6 +34,8 @@ import {
     StructuredOutputTool, 
     MetadataTool,
     MessagingTool,
+    ShellExecutionTool,
+    CodeDiffTool,
     Tool
 } from './common/tools';
 import { 
@@ -85,6 +87,20 @@ async function initializeTools(workspaceRoot: string | undefined): Promise<void>
         if (metadataTool && metadataTool.name) {
             agentTools.set(metadataTool.name, metadataTool);
             traceInfo(`Registered tool: ${metadataTool.name}`);
+        }
+        
+        // Initialize ShellExecutionTool
+        const shellExecutionTool = new ShellExecutionTool(workspaceRoot);
+        if (shellExecutionTool && shellExecutionTool.name) {
+            agentTools.set(shellExecutionTool.name, shellExecutionTool);
+            traceInfo(`Registered tool: ${shellExecutionTool.name}`);
+        }
+        
+        // Initialize CodeDiffTool
+        const codeDiffTool = new CodeDiffTool(workspaceRoot);
+        if (codeDiffTool && codeDiffTool.name) {
+            agentTools.set(codeDiffTool.name, codeDiffTool);
+            traceInfo(`Registered tool: ${codeDiffTool.name}`);
         }
     } catch (error) {
         traceError('Error initializing tools:', error);

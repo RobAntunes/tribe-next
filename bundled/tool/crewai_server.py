@@ -711,6 +711,92 @@ class CrewAIServer:
 
             logger.info(f"Created filesystem tools: fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete")
 
+            # Create Shell Execution Tool
+            try:
+                # Import ShellExecutionTool
+                from crewai_adapter import ShellExecutionTool
+
+                # Create and register the tool
+                shell_tool = ShellExecutionTool()
+                shell_tool_id = "shell_execute"
+                self.tools[shell_tool_id] = shell_tool
+                logger.info(f"Created shell execution tool with ID {shell_tool_id}")
+            except ImportError:
+                logger.warning("Could not import ShellExecutionTool from crewai_adapter")
+
+            # Create Code Diff Tool
+            try:
+                # Define code diff tool function
+                def code_diff(original_code, modified_code, file_path=None):
+                    """
+                    Generate a diff between original and modified code
+
+                    Args:
+                        original_code: Original code content
+                        modified_code: Modified code content
+                        file_path: Optional path to associate with the diff
+
+                    Returns:
+                        Dictionary with diff information
+                    """
+                    try:
+                        import difflib
+
+                        # Generate unified diff
+                        diff_lines = list(difflib.unified_diff(
+                            original_code.splitlines(),
+                            modified_code.splitlines(),
+                            fromfile="original" if not file_path else f"a/{file_path}",
+                            tofile="modified" if not file_path else f"b/{file_path}",
+                            lineterm="",
+                            n=3  # Context lines
+                        ))
+
+                        diff_text = "\n".join(diff_lines)
+
+                        return {
+                            "status": "success",
+                            "diff": diff_text,
+                            "file_path": file_path,
+                            "has_changes": bool(diff_lines)
+                        }
+                    except Exception as e:
+                        return {
+                            "status": "error",
+                            "message": f"Error generating diff: {str(e)}"
+                        }
+
+                # Create and register the tool
+                from crewai import Tool
+                diff_tool = Tool(
+                    name="code_diff",
+                    description="Generate a diff between original and modified code to show changes",
+                    func=code_diff
+                )
+                diff_tool_id = "code_diff"
+                self.tools[diff_tool_id] = diff_tool
+                logger.info(f"Created code diff tool with ID {diff_tool_id}")
+            except Exception as e:
+                logger.warning(f"Could not create code diff tool: {e}")
+
+            # Define default tools that will be assigned to all new agents
+            default_tools = [
+                "learning_system",
+                "project_management",
+                "json_output",
+                "extract_json",
+                "fs_read",
+                "fs_write",
+                "fs_update",
+                "fs_list",
+                "fs_search",
+                "fs_delete",
+                "shell_execute",  # Shell execution tool
+                "code_diff"       # Code diff tool
+            ]
+            self.default_tools = default_tools
+            logger.info(f"Created default tools list with {len(default_tools)} tools: {', '.join(default_tools)}")
+
             # Save the tool state
             self._save_tool_state()
 
@@ -997,19 +1083,36 @@ class CrewAIServer:
                 # Create it dynamically
                 setattr(agent, 'tools', [])
 
+            # Make a copy to avoid modifying the original list
+            tool_ids_to_use = list(tool_ids)
+
+            # Add default tools if not already included and we have default tools defined
+            if hasattr(self, 'default_tools'):
+                for tool_id in self.default_tools:
+                    if tool_id not in tool_ids_to_use and tool_id in self.tools:
+                        tool_ids_to_use.append(tool_id)
+                        logger.info(f"Added default tool {tool_id} to agent {agent.name}")
+
             # Get the tools based on tool IDs
             tools_to_attach = []
-            for tool_id in tool_ids:
+            for tool_id in tool_ids_to_use:
                 if tool_id in self.tools:
                     tools_to_attach.append(self.tools[tool_id])
+                    logger.info(f"Added tool {tool_id} to agent {agent.name}")
+                else:
+                    logger.warning(f"Tool {tool_id} not found in available tools")
 
             # Set the tools on the agent
             agent.tools = tools_to_attach
 
+            # Log which tools were added
+            tool_names = [getattr(t, 'name', str(t)) for t in tools_to_attach]
+            logger.info(f"Agent {agent.name} tools: {', '.join(tool_names)}")
+
             # Store the relationship in our mapping
             agent_id = getattr(agent, 'id', None) or getattr(agent, 'name', None)
             if agent_id:
-                self.agent_tools[agent_id] = tool_ids
+                self.agent_tools[agent_id] = tool_ids_to_use
 
             logger.info(f"Attached {len(tools_to_attach)} tools to agent {agent.name}")
             return True
@@ -1314,7 +1417,7 @@ class CrewAIServer:
 
                         # Use correct provider/model format
                         llm = LLM(
-                            model="anthropic/claude-3-opus-20240229",  # Try a different model
+                            model="anthropic/claude-3-7-sonnet-latest",  # Try a different model
                         )
                         logger.info("Using Anthropic Claude Opus model (second attempt)")
                     except Exception as e:
@@ -1442,6 +1545,27 @@ class CrewAIServer:
 
             # Store the agent
             self.agents[agent_id] = agent
+
+            # Ensure the agent has all default tools
+            if hasattr(self, 'default_tools'):
+                # Make sure agent_id is in agent_tools mapping
+                if agent_id not in self.agent_tools:
+                    self.agent_tools[agent_id] = []
+
+                # Ensure that shell_execute and code_diff are in the tools list
+                tools_to_add = self.agent_tools[agent_id].copy()
+                if "shell_execute" not in tools_to_add and "shell_execute" in self.tools:
+                    tools_to_add.append("shell_execute")
+                    logger.info(f"Added shell_execute tool to agent {agent_id}")
+
+                if "code_diff" not in tools_to_add and "code_diff" in self.tools:
+                    tools_to_add.append("code_diff")
+                    logger.info(f"Added code_diff tool to agent {agent_id}")
+
+                # Add default tools if needed
+                self._attach_tools_to_agent(agent, tools_to_add)
+                logger.info(f"Attached tools to agent {agent_id}: {tools_to_add}")
+
             return agent
 
         except Exception as e:
@@ -2359,7 +2483,7 @@ class CrewAIServer:
 
             # Run the crew
             result = crew.kickoff()
-            
+
             # Ensure result is converted to string if it's a dictionary or list
             string_result = ensure_string_output(result)
 
@@ -4200,7 +4324,7 @@ You can access these tools by mentioning them in your responses. Remember that y
                     payload["id"] = agent_id
 
                     # Attach default tools to the agent
-                    default_tools = ["learning_system", "project_management", "json_output", "extract_json"]
+                    default_tools = ["learning_system", "project_management", "json_output", "extract_json", "shell_execute"]
                     self._attach_tools_to_agent(agent_result, default_tools)
 
                     # Save the updated state

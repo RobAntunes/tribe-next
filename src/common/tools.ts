@@ -2,6 +2,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs-extra';
+import * as cp from 'child_process';
+import * as crypto from 'crypto';
 import { traceError, traceInfo, traceDebug } from './log/logging';
 import * as diff from 'diff';
 // We now have @types/diff installed, so this is not needed anymore
@@ -16,6 +18,800 @@ export interface Tool {
     examples: string[];
     parameters: ToolParameter[];
     execute(params: Record<string, any>): Promise<any>;
+}
+
+/**
+ * Shell Execution Tool for safely running shell commands
+ * Provides secure command execution with output parsing and safety features
+ */
+export class ShellExecutionTool implements Tool {
+    name = 'shell_execute';
+    description = 'Execute shell commands safely with proper security constraints';
+    private _workspaceRoot: string;
+
+    usage = `Use this tool to:
+- Execute shell commands in a controlled environment
+- Get formatted output from command-line tools
+- Run build, test, and development scripts
+- Execute git commands
+- Perform filesystem operations via shell commands`;
+
+    examples = [
+        '{ "action": "execute", "command": "ls -la", "cwd": "/path/to/directory" }',
+        '{ "action": "execute", "command": "npm run build", "timeout": 30000 }',
+        '{ "action": "execute", "command": "git status", "parse": "json" }',
+        '{ "action": "execute", "command": "python -m pytest tests/", "timeout": 60000 }'
+    ];
+
+    parameters = [
+        {
+            name: 'action',
+            type: 'string',
+            description: 'The action to perform (execute)',
+            required: true
+        },
+        {
+            name: 'command',
+            type: 'string',
+            description: 'The shell command to execute',
+            required: true
+        },
+        {
+            name: 'cwd',
+            type: 'string',
+            description: 'The working directory for the command',
+            required: false
+        },
+        {
+            name: 'timeout',
+            type: 'number',
+            description: 'Timeout in milliseconds',
+            required: false,
+            default: 30000
+        },
+        {
+            name: 'parse',
+            type: 'string',
+            description: 'Output parsing format (raw, lines, json)',
+            required: false,
+            default: 'raw'
+        },
+        {
+            name: 'env',
+            type: 'object',
+            description: 'Additional environment variables as key-value pairs',
+            required: false
+        }
+    ];
+
+    // Allowed commands for security
+    private _allowedCommands: Set<string> = new Set([
+        // Development tools
+        'npm', 'node', 'python', 'python3', 'pip', 'pip3', 
+        'yarn', 'pnpm', 'gradle', 'mvn', 'mvnw',
+        
+        // Version control
+        'git', 'svn', 'hg',
+        
+        // Build tools
+        'make', 'cmake', 'cargo', 'dotnet',
+        
+        // File operations
+        'ls', 'dir', 'find', 'grep', 'cat', 'head', 'tail',
+        
+        // Directory operations
+        'mkdir', 'rmdir', 'cd', 'pwd', 'cp', 'mv', 'rm'
+    ]);
+
+    // Blocked patterns for security
+    private _blockedPatterns: RegExp[] = [
+        /sudo/,
+        /su\s+-/,
+        /rm\s+(-rf?|--recursive)\s+\//,
+        />\s*\/dev\/(null|sd[a-z])/,
+        /\|\s*(bash|sh|zsh)/,
+        /curl\s+.*\s*\|\s*(bash|sh|zsh)/,
+        /wget\s+.*\s*\|\s*(bash|sh|zsh)/,
+        /chmod\s+777/,
+        /chown\s+.*\s+\/\w+/
+    ];
+
+    constructor(workspaceRoot: string) {
+        this._workspaceRoot = workspaceRoot;
+    }
+
+    async execute(params: Record<string, any>): Promise<any> {
+        const { action, command, cwd, timeout = 30000, parse = 'raw', env = {} } = params;
+        
+        if (action !== 'execute') {
+            return { error: `Unknown action: ${action}. Only 'execute' is supported.` };
+        }
+        
+        if (!command || typeof command !== 'string') {
+            return { error: 'Command is required and must be a string' };
+        }
+        
+        // Perform security validation
+        const securityCheck = this._validateCommand(command);
+        if (!securityCheck.safe) {
+            return { 
+                error: `Command rejected: ${securityCheck.reason}`,
+                command
+            };
+        }
+        
+        try {
+            // Resolve working directory
+            const workingDir = cwd 
+                ? this._resolveWorkspacePath(cwd)
+                : this._workspaceRoot;
+            
+            // Execute command
+            const result = await this._executeCommand(command, {
+                cwd: workingDir,
+                timeout,
+                env: { ...process.env, ...env }
+            });
+            
+            // Parse output if requested
+            let parsedOutput;
+            switch (parse) {
+                case 'lines':
+                    parsedOutput = result.stdout.split('\n').filter(line => line.trim().length > 0);
+                    break;
+                case 'json':
+                    try {
+                        parsedOutput = JSON.parse(result.stdout);
+                    } catch (e) {
+                        parsedOutput = {
+                            error: 'Failed to parse command output as JSON',
+                            rawOutput: result.stdout
+                        };
+                    }
+                    break;
+                case 'raw':
+                default:
+                    parsedOutput = result.stdout;
+            }
+            
+            return {
+                success: true,
+                command,
+                exitCode: result.exitCode,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                output: parsedOutput,
+                executionTime: result.executionTime
+            };
+        } catch (error) {
+            traceError(`Error executing shell command: ${error}`);
+            return {
+                error: String(error),
+                command
+            };
+        }
+    }
+
+    /**
+     * Validate a command for security concerns
+     */
+    private _validateCommand(command: string): { safe: boolean, reason?: string } {
+        // Split command to get the base command
+        const trimmedCommand = command.trim();
+        const parts = trimmedCommand.split(/\s+/);
+        const baseCommand = parts[0];
+        
+        // Check if command is explicitly allowed
+        if (!this._allowedCommands.has(baseCommand)) {
+            return {
+                safe: false,
+                reason: `Command '${baseCommand}' is not in the allowed list for security reasons`
+            };
+        }
+        
+        // Check for blocked patterns
+        for (const pattern of this._blockedPatterns) {
+            if (pattern.test(trimmedCommand)) {
+                return {
+                    safe: false,
+                    reason: `Command contains a blocked pattern: ${pattern}`
+                };
+            }
+        }
+        
+        // Check for suspicious path traversal
+        if (trimmedCommand.includes('..') && (
+            trimmedCommand.includes('cd ') || 
+            trimmedCommand.includes('rm ') || 
+            trimmedCommand.includes('cp ') || 
+            trimmedCommand.includes('mv ')
+        )) {
+            return {
+                safe: false,
+                reason: 'Command contains suspicious parent directory traversal'
+            };
+        }
+        
+        return { safe: true };
+    }
+
+    /**
+     * Execute a shell command with proper error handling
+     */
+    private _executeCommand(command: string, options: {
+        cwd?: string;
+        timeout?: number;
+        env?: NodeJS.ProcessEnv;
+    }): Promise<{
+        stdout: string;
+        stderr: string;
+        exitCode: number;
+        executionTime: number;
+    }> {
+        return new Promise((resolve, reject) => {
+            const startTime = Date.now();
+            let stdout = '';
+            let stderr = '';
+            
+            traceInfo(`Executing command: ${command} in ${options.cwd}`);
+            
+            const childProcess = cp.exec(command, {
+                cwd: options.cwd,
+                env: options.env,
+                timeout: options.timeout
+            });
+            
+            childProcess.stdout?.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+            
+            childProcess.stderr?.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+            
+            childProcess.on('error', (error: Error) => {
+                traceError(`Command execution error: ${error.message}`);
+                reject(error);
+            });
+            
+            childProcess.on('exit', (code: number | null) => {
+                const executionTime = Date.now() - startTime;
+                traceInfo(`Command completed in ${executionTime}ms with exit code ${code}`);
+                
+                resolve({
+                    stdout,
+                    stderr,
+                    exitCode: code !== null ? code : -1,
+                    executionTime
+                });
+            });
+        });
+    }
+
+    /**
+     * Resolve a workspace-relative path to an absolute path
+     */
+    private _resolveWorkspacePath(filePath: string): string {
+        if (path.isAbsolute(filePath)) {
+            return filePath;
+        }
+        
+        return path.join(this._workspaceRoot, filePath);
+    }
+}
+
+/**
+ * Enhanced Code Diff Tool for comprehensive code comparison, diffing, and patching
+ * Provides advanced diffing capabilities with structured output and visualization
+ */
+export class CodeDiffTool implements Tool {
+    name = 'code_diff';
+    description = 'Advanced code diffing, comparison, and patch application tool';
+    private _workspaceRoot: string;
+
+    usage = `Use this tool to:
+- Compare code between two files or strings
+- Generate detailed, structured diffs with context
+- Apply patches to files
+- Visualize changes in a human-readable format
+- Generate unified or split diffs
+- Analyze semantic changes in code`;
+
+    examples = [
+        '{ "action": "compare_files", "file1": "path/to/file1.ts", "file2": "path/to/file2.ts" }',
+        '{ "action": "generate_diff", "original": "function foo() {\\n  return 1;\\n}", "modified": "function foo() {\\n  return 2;\\n}" }',
+        '{ "action": "apply_patch", "target": "path/to/file.ts", "patch": "@@ -1,3 +1,3 @@\\n function foo() {\\n-  return 1;\\n+  return 2;\\n }" }',
+        '{ "action": "visualize_changes", "file": "path/to/file.ts", "before": "commit1", "after": "commit2" }',
+        '{ "action": "analyze_impact", "diff": "patch content", "scope": "function" }'
+    ];
+
+    parameters = [
+        {
+            name: 'action',
+            type: 'string',
+            description: 'The diff action to perform (compare_files, generate_diff, apply_patch, visualize_changes, analyze_impact)',
+            required: true
+        },
+        {
+            name: 'file1',
+            type: 'string',
+            description: 'First file path for comparison',
+            required: false
+        },
+        {
+            name: 'file2',
+            type: 'string',
+            description: 'Second file path for comparison',
+            required: false
+        },
+        {
+            name: 'original',
+            type: 'string',
+            description: 'Original content for diff generation',
+            required: false
+        },
+        {
+            name: 'modified',
+            type: 'string',
+            description: 'Modified content for diff generation',
+            required: false
+        },
+        {
+            name: 'target',
+            type: 'string',
+            description: 'Target file to apply patch to',
+            required: false
+        },
+        {
+            name: 'patch',
+            type: 'string',
+            description: 'Patch content to apply',
+            required: false
+        },
+        {
+            name: 'format',
+            type: 'string',
+            description: 'Output format (unified, split, json, html)',
+            required: false,
+            default: 'unified'
+        },
+        {
+            name: 'context_lines',
+            type: 'number',
+            description: 'Number of context lines to include',
+            required: false,
+            default: 3
+        }
+    ];
+
+    constructor(workspaceRoot: string) {
+        this._workspaceRoot = workspaceRoot;
+    }
+
+    async execute(params: Record<string, any>): Promise<any> {
+        const { action } = params;
+        
+        try {
+            switch (action) {
+                case 'compare_files':
+                    return await this._compareFiles(params.file1, params.file2, params.format, params.context_lines);
+                case 'generate_diff':
+                    return await this._generateDiff(params.original, params.modified, params.format, params.context_lines);
+                case 'apply_patch':
+                    return await this._applyPatch(params.target, params.patch);
+                case 'visualize_changes':
+                    return await this._visualizeChanges(params.file, params.before, params.after, params.format);
+                case 'analyze_impact':
+                    return await this._analyzeImpact(params.diff, params.scope);
+                default:
+                    return { error: `Unknown action: ${action}` };
+            }
+        } catch (error) {
+            traceError(`Error in CodeDiffTool: ${error}`);
+            return { error: String(error) };
+        }
+    }
+
+    /**
+     * Compare two files and generate a structured diff
+     */
+    private async _compareFiles(file1Path: string, file2Path: string, format: string = 'unified', contextLines: number = 3): Promise<any> {
+        try {
+            // Resolve paths
+            const resolvedFile1 = this._resolveWorkspacePath(file1Path);
+            const resolvedFile2 = this._resolveWorkspacePath(file2Path);
+            
+            // Read file contents
+            const file1Content = await fs.readFile(resolvedFile1, 'utf-8');
+            const file2Content = await fs.readFile(resolvedFile2, 'utf-8');
+            
+            // Generate diff
+            return this._generateDiff(file1Content, file2Content, format, contextLines, {
+                file1: file1Path,
+                file2: file2Path
+            });
+        } catch (error) {
+            traceError(`Error comparing files: ${error}`);
+            return { error: `Failed to compare files: ${error}` };
+        }
+    }
+
+    /**
+     * Generate a diff between original and modified content
+     */
+    private async _generateDiff(original: string, modified: string, format: string = 'unified', contextLines: number = 3, metadata?: any): Promise<any> {
+        try {
+            // Split content into lines
+            const originalLines = original.split('\n');
+            const modifiedLines = modified.split('\n');
+            
+            // Create diff patches
+            const patches = diff.createPatch(
+                metadata?.file1 || 'original',
+                original,
+                modified,
+                metadata?.file2 || 'modified',
+                '',
+                { context: contextLines }
+            );
+            
+            // Parse the changes for structured output
+            const changes = this._parseChanges(original, modified);
+            
+            // Format output based on requested format
+            let formattedOutput;
+            switch (format) {
+                case 'unified':
+                    formattedOutput = patches;
+                    break;
+                case 'split':
+                    formattedOutput = this._generateSplitView(originalLines, modifiedLines, changes);
+                    break;
+                case 'json':
+                    formattedOutput = changes;
+                    break;
+                case 'html':
+                    formattedOutput = this._generateHtmlDiff(original, modified);
+                    break;
+                default:
+                    formattedOutput = patches;
+            }
+            
+            return {
+                success: true,
+                diff: formattedOutput,
+                metadata: {
+                    ...metadata,
+                    originalLines: originalLines.length,
+                    modifiedLines: modifiedLines.length,
+                    additions: changes.filter(c => c.type === 'add').length,
+                    deletions: changes.filter(c => c.type === 'remove').length,
+                    modifications: changes.filter(c => c.type === 'change').length
+                },
+                format,
+                summary: this._generateDiffSummary(changes)
+            };
+        } catch (error) {
+            traceError(`Error generating diff: ${error}`);
+            return { error: `Failed to generate diff: ${error}` };
+        }
+    }
+
+    /**
+     * Apply a patch to a file
+     */
+    private async _applyPatch(targetPath: string, patch: string): Promise<any> {
+        try {
+            // Resolve target path
+            const resolvedTarget = this._resolveWorkspacePath(targetPath);
+            
+            // Read target file
+            const targetContent = await fs.readFile(resolvedTarget, 'utf-8');
+            
+            // Apply patch
+            const patchedContent = diff.applyPatch(targetContent, patch);
+            
+            // Write patched content back to file
+            await fs.writeFile(resolvedTarget, patchedContent);
+            
+            return {
+                success: true,
+                message: `Successfully applied patch to ${targetPath}`,
+                patchedFile: targetPath
+            };
+        } catch (error) {
+            traceError(`Error applying patch: ${error}`);
+            return { error: `Failed to apply patch: ${error}` };
+        }
+    }
+
+    /**
+     * Visualize changes between versions of a file 
+     */
+    private async _visualizeChanges(filePath: string, before: string, after: string, format: string = 'unified'): Promise<any> {
+        try {
+            // This could use git history or VSCode's file history API in a real implementation
+            // For now, we'll assume before/after are content strings directly
+            
+            return this._generateDiff(before, after, format, 3, {
+                file: filePath,
+                beforeVersion: before.substring(0, 7),
+                afterVersion: after.substring(0, 7)
+            });
+        } catch (error) {
+            traceError(`Error visualizing changes: ${error}`);
+            return { error: `Failed to visualize changes: ${error}` };
+        }
+    }
+
+    /**
+     * Analyze the impact of changes
+     */
+    private async _analyzeImpact(diffContent: string, scope: string = 'file'): Promise<any> {
+        try {
+            // In a real implementation, this would use AST analysis to understand
+            // semantic changes. For now, we'll provide a simple analysis.
+            
+            const addedLines = (diffContent.match(/^\+(?![\+\-])/gm) || []).length;
+            const removedLines = (diffContent.match(/^\-(?![\+\-])/gm) || []).length;
+            
+            // Extract function/class names that were modified
+            const modifiedEntities = this._extractModifiedEntities(diffContent);
+            
+            // Calculate risk based on ratio of changes
+            const changeRatio = (addedLines + removedLines) / diffContent.split('\n').length;
+            let risk = 'low';
+            if (changeRatio > 0.7) risk = 'high';
+            else if (changeRatio > 0.3) risk = 'medium';
+            
+            return {
+                success: true,
+                impact: {
+                    addedLines,
+                    removedLines,
+                    netChange: addedLines - removedLines,
+                    modifiedEntities,
+                    risk,
+                    scope
+                },
+                recommendations: this._generateRecommendations(modifiedEntities, risk)
+            };
+        } catch (error) {
+            traceError(`Error analyzing impact: ${error}`);
+            return { error: `Failed to analyze impact: ${error}` };
+        }
+    }
+
+    /**
+     * Generate split view diff
+     */
+    private _generateSplitView(originalLines: string[], modifiedLines: string[], changes: any[]): any {
+        // Create a structured split view format
+        const splitView: any[] = [];
+        let originalIdx = 0;
+        let modifiedIdx = 0;
+        
+        changes.forEach(change => {
+            if (change.type === 'context') {
+                // Add context lines
+                for (let i = 0; i < change.count; i++) {
+                    splitView.push({
+                        type: 'context',
+                        original: {
+                            line: originalIdx + 1,
+                            content: originalLines[originalIdx]
+                        },
+                        modified: {
+                            line: modifiedIdx + 1,
+                            content: modifiedLines[modifiedIdx]
+                        }
+                    });
+                    originalIdx++;
+                    modifiedIdx++;
+                }
+            } else if (change.type === 'add') {
+                // Add added lines
+                splitView.push({
+                    type: 'add',
+                    original: null,
+                    modified: {
+                        line: modifiedIdx + 1,
+                        content: modifiedLines[modifiedIdx]
+                    }
+                });
+                modifiedIdx++;
+            } else if (change.type === 'remove') {
+                // Add removed lines
+                splitView.push({
+                    type: 'remove',
+                    original: {
+                        line: originalIdx + 1,
+                        content: originalLines[originalIdx]
+                    },
+                    modified: null
+                });
+                originalIdx++;
+            } else if (change.type === 'change') {
+                // Add changed lines
+                splitView.push({
+                    type: 'change',
+                    original: {
+                        line: originalIdx + 1,
+                        content: originalLines[originalIdx]
+                    },
+                    modified: {
+                        line: modifiedIdx + 1,
+                        content: modifiedLines[modifiedIdx]
+                    }
+                });
+                originalIdx++;
+                modifiedIdx++;
+            }
+        });
+        
+        return splitView;
+    }
+
+    /**
+     * Generate HTML diff for visual display
+     */
+    private _generateHtmlDiff(original: string, modified: string): string {
+        // This would generate HTML with nice syntax highlighting in a real implementation
+        // For now, we'll return a simple HTML representation
+        const changes = diff.diffLines(original, modified);
+        
+        let html = '<div class="diff-container">\n';
+        
+        changes.forEach(part => {
+            const type = part.added ? 'addition' : part.removed ? 'deletion' : 'context';
+            const colorClass = part.added ? 'diff-add' : part.removed ? 'diff-remove' : '';
+            
+            html += `<div class="diff-block ${colorClass}">\n`;
+            part.value.split('\n').forEach(line => {
+                if (line === '') return;
+                const prefix = part.added ? '+' : part.removed ? '-' : ' ';
+                html += `<div class="diff-line">${prefix} ${this._escapeHtml(line)}</div>\n`;
+            });
+            html += '</div>\n';
+        });
+        
+        html += '</div>';
+        return html;
+    }
+
+    /**
+     * Parse changes between two strings
+     */
+    private _parseChanges(original: string, modified: string): any[] {
+        const changes: any[] = [];
+        const diffResult = diff.diffLines(original, modified);
+        
+        diffResult.forEach(part => {
+            if (part.added) {
+                changes.push({
+                    type: 'add',
+                    content: part.value,
+                    count: part.count
+                });
+            } else if (part.removed) {
+                changes.push({
+                    type: 'remove',
+                    content: part.value,
+                    count: part.count
+                });
+            } else {
+                changes.push({
+                    type: 'context',
+                    content: part.value,
+                    count: part.count
+                });
+            }
+        });
+        
+        return changes;
+    }
+
+    /**
+     * Generate a human-readable summary of changes
+     */
+    private _generateDiffSummary(changes: any[]): string {
+        const additions = changes.filter(c => c.type === 'add').reduce((sum, c) => sum + c.count, 0);
+        const deletions = changes.filter(c => c.type === 'remove').reduce((sum, c) => sum + c.count, 0);
+        
+        let summary = `${additions} addition${additions !== 1 ? 's' : ''} and ${deletions} deletion${deletions !== 1 ? 's' : ''}`;
+        
+        // Analyze the changes to identify patterns
+        const modifiedEntities = this._extractModifiedEntitiesFromChanges(changes);
+        if (modifiedEntities.length > 0) {
+            summary += `. Modified: ${modifiedEntities.join(', ')}`;
+        }
+        
+        return summary;
+    }
+
+    /**
+     * Extract modified entities (functions, classes) from a diff
+     */
+    private _extractModifiedEntities(diffContent: string): string[] {
+        const entities: string[] = [];
+        const functionRegex = /[\+\-]\s*(function|class|const|let|var)\s+(\w+)/g;
+        let match;
+        
+        while ((match = functionRegex.exec(diffContent)) !== null) {
+            entities.push(`${match[1]} ${match[2]}`);
+        }
+        
+        return [...new Set(entities)]; // Remove duplicates
+    }
+
+    /**
+     * Extract modified entities from changes array
+     */
+    private _extractModifiedEntitiesFromChanges(changes: any[]): string[] {
+        const entities: string[] = [];
+        const relevantChanges = changes.filter(c => c.type === 'add' || c.type === 'remove');
+        
+        relevantChanges.forEach(change => {
+            const functionRegex = /(function|class|const|let|var)\s+(\w+)/g;
+            let match;
+            
+            while ((match = functionRegex.exec(change.content)) !== null) {
+                entities.push(`${match[1]} ${match[2]}`);
+            }
+        });
+        
+        return [...new Set(entities)]; // Remove duplicates
+    }
+
+    /**
+     * Generate recommendations based on changes
+     */
+    private _generateRecommendations(modifiedEntities: string[], risk: string): string[] {
+        const recommendations: string[] = [];
+        
+        if (risk === 'high') {
+            recommendations.push('Consider breaking down this large change into smaller, more focused commits');
+            recommendations.push('Ensure comprehensive tests are in place for the modified components');
+        }
+        
+        if (modifiedEntities.length > 3) {
+            recommendations.push('Changes affect multiple entities - ensure all interactions are tested');
+        }
+        
+        if (modifiedEntities.some(e => e.includes('class'))) {
+            recommendations.push('Class modifications detected - check for impacts on inheritance/implementations');
+        }
+        
+        // Add generic recommendations if none specific
+        if (recommendations.length === 0) {
+            recommendations.push('No specific concerns detected - standard code review recommended');
+        }
+        
+        return recommendations;
+    }
+
+    /**
+     * Escape HTML special characters
+     */
+    private _escapeHtml(text: string): string {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    /**
+     * Resolve a workspace-relative path to an absolute path
+     */
+    private _resolveWorkspacePath(filePath: string): string {
+        if (path.isAbsolute(filePath)) {
+            return filePath;
+        }
+        
+        return path.join(this._workspaceRoot, filePath);
+    }
 }
 
 /**
