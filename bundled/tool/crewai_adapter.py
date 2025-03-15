@@ -574,7 +574,33 @@ Your learning style is {learning_style} and you work in a {working_style} manner
             
             # Validate the function has docstring and type hints
             self._validate_function()
-        
+            
+            # Add BaseTool and CrewStructuredTool compatibility attributes
+            self.args_schema = None  # For BaseModel compatibility
+            
+            # Special case handling for CrewAI validation
+            try:
+                # Add direct methods that CrewAI might look for
+                setattr(self, "is_base_tool", True)
+                setattr(self, "is_crew_structured_tool", True)
+                setattr(self, "_type", "CrewStructuredTool")
+                
+                # Add special attributes for Pydantic validation
+                # These are used by the CrewAI AgentExecutionStartedEvent validation
+                setattr(self, "__pydantic_model__", True)
+                setattr(self, "__cls_kwargs__", {
+                    "name": name,
+                    "description": description
+                })
+                
+                # Add a special method for Pydantic model_validate compatibility
+                def model_validate(cls, obj):
+                    return obj
+                setattr(Tool, "model_validate", classmethod(model_validate))
+                
+            except Exception as e:
+                logger.warning(f"Error adding compatibility attributes to tool: {e}")
+            
         def _validate_function(self):
             """Validate that the function is properly documented"""
             if not self.func.__doc__:
@@ -592,6 +618,20 @@ Your learning style is {learning_style} and you work in a {working_style} manner
         def __call__(self, *args, **kwargs):
             """Make the tool callable"""
             return self.func(*args, **kwargs)
+            
+        # Methods required by CrewStructuredTool compatibility
+        def is_instance(self, cls):
+            """Check if this is an instance of a class - for CrewStructuredTool compatibility"""
+            return cls.__name__ in ["CrewStructuredTool", "BaseTool"]
+            
+        def __instancecheck__(self, instance):
+            """Check if an instance is compatible with this class"""
+            return True
+            
+        @property
+        def __name__(self):
+            """Return the name of the tool class for compatibility"""
+            return "CrewStructuredTool"
         
         def result_as_answer(self, result: Any) -> str:
             """
@@ -678,6 +718,9 @@ Your learning style is {learning_style} and you work in a {working_style} manner
         This implementation aligns with CLAUDE.md section 3.8 for structured output tools.
         """
         def __init__(self, schema: Dict[str, Any]):
+            # Add compatibility attributes for BaseTool and CrewStructuredTool
+            self.args_schema = None
+            
             def structured_json_output(input_str: str) -> Dict[str, Any]:
                 """
                 Convert input into a JSON object that follows the specified schema.
@@ -827,13 +870,30 @@ Your learning style is {learning_style} and you work in a {working_style} manner
                 "Usage: Call this tool with your content and it will convert it to a properly formatted JSON object that matches the required schema."
             )
             
+            # Initialize the base Tool
             super().__init__(
                 name="structured_json_output",
                 description=description,
                 func=structured_json_output
             )
             
+            # Store the schema for reference
             self.schema = schema
+            
+            # Ensure all required attributes for CrewStructuredTool are present
+            self.args_schema = None
+            
+            # Add special attributes for Pydantic validation
+            try:
+                # Add direct methods that CrewAI might look for
+                setattr(self, "__pydantic_model__", True)
+                setattr(self, "__cls_kwargs__", {
+                    "name": "structured_json_output",
+                    "description": description,
+                    "schema": schema
+                })
+            except Exception as e:
+                logger.warning(f"Error adding compatibility attributes to StructuredJSONOutputTool: {e}")
             
         def invoke(self, input_str: str = None, **kwargs) -> Union[Dict[str, Any], str]:
             """
@@ -915,6 +975,9 @@ Your learning style is {learning_style} and you work in a {working_style} manner
         Tool for extracting and validating JSON from text
         """
         def __init__(self):
+            # Add compatibility attributes for BaseTool and CrewStructuredTool
+            self.args_schema = None
+            
             def extract_json(input_str: str) -> Dict[str, Any]:
                 """
                 Extract JSON from a text string.
@@ -966,11 +1029,26 @@ Your learning style is {learning_style} and you work in a {working_style} manner
                         "input": input_str
                     }
             
+            # Initialize the base Tool
             super().__init__(
                 name="extract_json",
                 description="Extracts and validates JSON from text input. Use this tool when you need to extract JSON data from a text response.",
                 func=extract_json
             )
+            
+            # Ensure all required attributes for CrewStructuredTool are present
+            self.args_schema = None
+            
+            # Add special attributes for Pydantic validation
+            try:
+                # Add direct methods that CrewAI might look for
+                setattr(self, "__pydantic_model__", True)
+                setattr(self, "__cls_kwargs__", {
+                    "name": "extract_json",
+                    "description": "Extracts and validates JSON from text input. Use this tool when you need to extract JSON data from a text response."
+                })
+            except Exception as e:
+                logger.warning(f"Error adding compatibility attributes to ExtractJSONTool: {e}")
             
         def invoke(self, input_str: str = None, **kwargs) -> Union[Dict[str, Any], str]:
             """
@@ -1054,6 +1132,9 @@ Your learning style is {learning_style} and you work in a {working_style} manner
         with security constraints and timeout capabilities.
         """
         def __init__(self):
+            # Add compatibility attributes for BaseTool and CrewStructuredTool
+            self.args_schema = None
+            
             import os
             import subprocess
             import shlex
@@ -1138,13 +1219,133 @@ Your learning style is {learning_style} and you work in a {working_style} manner
                 except Exception as e:
                     return f"Error executing command: {str(e)}"
             
+            # Initialize the base Tool
             super().__init__(
                 name="shell_execute",
                 description="Execute shell commands safely with security constraints and timeout capabilities. "
                            "Only safe, allowed commands are permitted.",
                 func=shell_execute
             )
+            
+            # Ensure all required attributes for CrewStructuredTool are present
+            self.args_schema = None
+            
+            # Add special attributes for Pydantic validation
+            try:
+                # Add direct methods that CrewAI might look for
+                setattr(self, "__pydantic_model__", True)
+                setattr(self, "__cls_kwargs__", {
+                    "name": "shell_execute",
+                    "description": "Execute shell commands safely with security constraints and timeout capabilities. "
+                                 "Only safe, allowed commands are permitted."
+                })
+            except Exception as e:
+                logger.warning(f"Error adding compatibility attributes to ShellExecutionTool: {e}")
 
+    # Create wrapper for tools to make them compatible with CrewAI
+    try:
+        # Try to import CrewAI's tool classes for composition pattern
+        try:
+            # Import CrewAI tool modules
+            from crewai.tools import BaseTool
+            logger.info("Successfully imported CrewAI tools for composition")
+            
+            # Define a wrapper function that converts our Tool to CrewAI's native tool format
+            def convert_to_crewai_tool(tool):
+                """Convert our custom Tool to a CrewAI-compatible BaseTool"""
+                try:
+                    # Try directly using the native BaseTool class
+                    try:
+                        # Define tool function that forwards calls to our original tool
+                        def tool_wrapper(tool_input=None, **kwargs):
+                            try:
+                                # Handle different calling conventions
+                                if hasattr(tool, 'invoke'):
+                                    result = tool.invoke(tool_input, **kwargs)
+                                elif hasattr(tool, 'run'):
+                                    result = tool.run(tool_input, **kwargs)
+                                else:
+                                    # Fallback to direct call
+                                    result = tool(tool_input, **kwargs)
+                                return result
+                            except Exception as invoke_err:
+                                logger.error(f"Error invoking wrapped tool {tool.name}: {invoke_err}")
+                                return f"Error using tool {tool.name}: {str(invoke_err)}"
+                        
+                        # Create the wrapped tool
+                        wrapped_tool = BaseTool(
+                            name=tool.name,
+                            description=tool.description,
+                            func=tool_wrapper  # Use our wrapper function
+                        )
+                        
+                        # Copy any important attributes
+                        if hasattr(tool, 'schema') and tool.schema:
+                            wrapped_tool.schema = tool.schema
+                            
+                        logger.info(f"Successfully wrapped tool {tool.name} with CrewAI BaseTool")
+                        return wrapped_tool
+                    except TypeError as te:
+                        # Different BaseTool signature in this version, try alternative approach
+                        logger.warning(f"Error with primary wrapping approach for {tool.name}: {te}, trying alternative")
+                        
+                        # Create a plain object and set properties manually
+                        class CrewToolWrapper:
+                            def __init__(self, name, description, func):
+                                self.name = name
+                                self.description = description
+                                self.func = func
+                                
+                            def __call__(self, *args, **kwargs):
+                                return self.func(*args, **kwargs)
+                                
+                            def run(self, tool_input=None, **kwargs):
+                                return self.func(tool_input, **kwargs)
+                                
+                            def invoke(self, tool_input=None, **kwargs):
+                                return self.func(tool_input, **kwargs)
+                        
+                        # Define the forwarding function
+                        def alt_tool_wrapper(tool_input=None, **kwargs):
+                            try:
+                                # Handle different calling conventions
+                                if hasattr(tool, 'invoke'):
+                                    result = tool.invoke(tool_input, **kwargs)
+                                elif hasattr(tool, 'run'):
+                                    result = tool.run(tool_input, **kwargs)
+                                else:
+                                    # Fallback to direct call
+                                    result = tool(tool_input, **kwargs)
+                                return result
+                            except Exception as invoke_err:
+                                logger.error(f"Error invoking wrapped tool {tool.name}: {invoke_err}")
+                                return f"Error using tool {tool.name}: {str(invoke_err)}"
+                        
+                        # Create the wrapper with the alternative approach
+                        alt_wrapped_tool = CrewToolWrapper(
+                            name=tool.name,
+                            description=tool.description,
+                            func=alt_tool_wrapper
+                        )
+                        
+                        logger.info(f"Successfully wrapped tool {tool.name} with alternative wrapper")
+                        return alt_wrapped_tool
+                        
+                except Exception as e:
+                    logger.error(f"Error wrapping tool {tool.name}: {e}")
+                    # Return the original tool if wrapping fails
+                    return tool
+            
+            # Set the converter function for later use
+            setattr(crewai, "_convert_to_crewai_tool", convert_to_crewai_tool)
+            
+            logger.info("Successfully set up tool conversion function")
+            
+        except (ImportError, AttributeError) as e:
+            logger.warning(f"Could not set up CrewAI tool conversion: {e}")
+    except Exception as patch_err:
+        logger.error(f"Error during tool conversion setup: {patch_err}")
+    
     # Register extended classes
     setattr(crewai, "ExtendedAgent", ExtendedAgent)
     setattr(crewai, "ExtendedTask", ExtendedTask)

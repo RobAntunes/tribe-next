@@ -1358,8 +1358,24 @@ class CrewAIServer:
             tools_to_attach = []
             for tool_id in tool_ids_to_use:
                 if tool_id in self.tools:
-                    tools_to_attach.append(self.tools[tool_id])
-                    logger.info(f"Added tool {tool_id} to agent {agent.name}")
+                    # IMPORTANT: Wrap our custom tools in CrewAI-compatible tools if possible
+                    raw_tool = self.tools[tool_id]
+                    # Check if we have the converter function available through crewai module
+                    if hasattr(crewai, "_convert_to_crewai_tool"):
+                        try:
+                            # Use the converter function
+                            converted_tool = crewai._convert_to_crewai_tool(raw_tool)
+                            tools_to_attach.append(converted_tool)
+                            logger.info(f"Added wrapped tool {tool_id} to agent {agent.name}")
+                        except Exception as convert_err:
+                            logger.error(f"Error converting tool {tool_id}: {convert_err}")
+                            # Fall back to using the raw tool
+                            tools_to_attach.append(raw_tool)
+                            logger.warning(f"Added raw tool {tool_id} to agent {agent.name} (could not convert)")
+                    else:
+                        # No converter available, use raw tool
+                        tools_to_attach.append(raw_tool)
+                        logger.info(f"Added tool {tool_id} to agent {agent.name} (no converter available)")
                 else:
                     logger.warning(f"Tool {tool_id} not found in available tools")
 
