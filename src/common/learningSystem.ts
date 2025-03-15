@@ -261,7 +261,7 @@ export class LearningSystem {
      */
     public async createResponseReflection(
         agentId: string, 
-        content: string, 
+        _content: string, 
         focus: string = 'Response Quality',
         stage: 'pre' | 'post' = 'post'
     ): Promise<Reflection | null> {

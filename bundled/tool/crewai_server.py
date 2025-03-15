@@ -29,6 +29,15 @@ except ImportError:
     except ImportError:
         print("Could not import env_vars module")
 
+# Import the indexer module
+try:
+    from .mightydev.indexer import CodebaseIndexer
+except ImportError:
+    try:
+        from mightydev.indexer import CodebaseIndexer
+    except ImportError:
+        print("Could not import indexer module, codebase indexing will be disabled")
+
 # Check for different virtual environments
 venv_paths = [
     # Custom crewai_venv for Python 3.13
@@ -106,6 +115,9 @@ class CrewAIServer:
         # Initialize agents and tasks
         self.agents = {}
         self.tasks = {}
+        
+        # Initialize progress tracking
+        self.progress_data = None
         self.crews = {}
         self.tools = {}  # tool_id -> tool object
         self.agent_tools = {}  # agent_id -> list of tool_ids
@@ -119,6 +131,17 @@ class CrewAIServer:
 
         # Agent performance metrics
         self.agent_performance = {} # agent_id -> performance metrics
+
+        # Initialize codebase indexer if available
+        self.codebase_indexer = None
+        try:
+            from mightydev.indexer import CodebaseIndexer
+            self.codebase_indexer = CodebaseIndexer(workspace_root=project_path)
+            logger.info(f"Initialized CodebaseIndexer for workspace: {project_path}")
+        except ImportError:
+            logger.warning("CodebaseIndexer not available - codebase indexing will be disabled")
+        except Exception as e:
+            logger.error(f"Error initializing CodebaseIndexer: {e}")
 
         # Create default tools that will be available to all agents
         self._create_default_tools()
@@ -262,15 +285,19 @@ class CrewAIServer:
                     return None, {"status": "error", "message": f"Access denied: Invalid path comparison: {path}"}
 
             # 4.1 File Read Tool
-            def fs_read(path):
+            def fs_read(path, binary=False, encoding='utf-8', line_range=None, chunk_size=None):
                 """
-                Read a file from the filesystem
+                Read a file from the filesystem with enhanced capabilities
 
                 Args:
                     path: Path to the file to read
+                    binary: Whether to read in binary mode
+                    encoding: Text encoding to use (ignored in binary mode)
+                    line_range: Tuple of (start_line, end_line) for partial reading
+                    chunk_size: Size of chunk to read for large files
 
                 Returns:
-                    The file content or error message
+                    The file content or error message with metadata
                 """
                 validated_path, error = validate_path(path)
                 if error:
@@ -286,30 +313,124 @@ class CrewAIServer:
                     # Check file size to prevent loading huge files
                     file_size = os.path.getsize(validated_path)
                     size_limit = 10 * 1024 * 1024  # 10MB limit
-                    if file_size > size_limit:
+                    
+                    # Function to check if file is binary
+                    def is_binary_file(file_path, sample_size=8000):
+                        """Check if a file is binary by examining a sample of its content."""
+                        try:
+                            with open(file_path, 'rb') as f:
+                                sample = f.read(sample_size)
+                            return b'\0' in sample or not all(c < 127 for c in sample if c > 31)
+                        except:
+                            return False
+                    
+                    # Detect if file is binary
+                    detected_binary = is_binary_file(validated_path)
+                    
+                    # Binary mode reading
+                    if binary:
+                        # For binary files, don't apply the same size limit if chunking
+                        binary_size_limit = 50 * 1024 * 1024  # 50MB for binary
+                        if file_size > binary_size_limit and not chunk_size:
+                            return {
+                                "status": "error",
+                                "message": f"Binary file too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {binary_size_limit / 1024 / 1024:.2f}MB limit). Use chunk_size parameter."
+                            }
+                            
+                        with open(validated_path, 'rb') as file:
+                            if chunk_size and chunk_size > 0:
+                                content = file.read(chunk_size)
+                                return {
+                                    "status": "success",
+                                    "message": f"Successfully read binary file (chunk): {path}",
+                                    "content_hex": content.hex(),
+                                    "format": "hex",
+                                    "file_size": file_size,
+                                    "chunk_size": len(content),
+                                    "has_more": file_size > chunk_size,
+                                    "is_binary": True,
+                                    "path": validated_path
+                                }
+                            else:
+                                content = file.read()
+                                return {
+                                    "status": "success",
+                                    "message": f"Successfully read binary file: {path}",
+                                    "content_hex": content.hex(),
+                                    "format": "hex",
+                                    "file_size": file_size,
+                                    "is_binary": True,
+                                    "path": validated_path
+                                }
+                    
+                    # Detected binary but not requested in binary mode
+                    elif detected_binary and not binary:
                         return {
-                            "status": "error",
-                            "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
+                            "status": "warning",
+                            "message": f"File appears to be binary. Use binary=True parameter to read properly.",
+                            "path": validated_path,
+                            "is_binary": True,
+                            "file_size": file_size
                         }
+                    
+                    # Text mode with line range
+                    elif line_range and isinstance(line_range, (list, tuple)) and len(line_range) == 2:
+                        if file_size > size_limit:
+                            return {
+                                "status": "error",
+                                "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
+                            }
+                            
+                        start_line, end_line = line_range
+                        with open(validated_path, 'r', encoding=encoding, errors='replace') as file:
+                            lines = file.readlines()
+                            if start_line < 0:
+                                start_line = 0
+                            if end_line < 0 or end_line > len(lines):
+                                end_line = len(lines)
+                            selected_lines = lines[start_line:end_line]
+                            content = "".join(selected_lines)
+                            
+                            return {
+                                "status": "success",
+                                "message": f"Successfully read file (lines {start_line+1}-{end_line}): {path}",
+                                "content": content,
+                                "start_line": start_line + 1,  # 1-based line numbers for display
+                                "end_line": end_line,
+                                "total_lines": len(lines),
+                                "encoding": encoding,
+                                "is_binary": False,
+                                "path": validated_path
+                            }
+                    
+                    # Regular text mode reading
+                    else:
+                        if file_size > size_limit:
+                            return {
+                                "status": "error",
+                                "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
+                            }
+                            
+                        # Read file with proper encoding detection
+                        with open(validated_path, 'r', encoding=encoding, errors='replace') as f:
+                            content = f.read()
 
-                    # Read file with proper encoding detection
-                    with open(validated_path, 'r', encoding='utf-8', errors='replace') as f:
-                        content = f.read()
-
-                    return {
-                        "status": "success",
-                        "message": f"Successfully read file: {path}",
-                        "content": content,
-                        "size": file_size,
-                        "path": validated_path
-                    }
+                        return {
+                            "status": "success",
+                            "message": f"Successfully read file: {path}",
+                            "content": content,
+                            "size": file_size,
+                            "encoding": encoding,
+                            "is_binary": False,
+                            "path": validated_path
+                        }
                 except Exception as e:
                     logger.error(f"Error reading file: {e}")
                     return {"status": "error", "message": f"Error reading file: {str(e)}"}
 
             fs_read_tool = Tool(
                 name="fs_read",
-                description="Read a file from the filesystem. Provide the file path relative to the project root or an absolute path.",
+                description="Read a file from the filesystem with enhanced capabilities including binary mode, encoding options, line ranges, and chunking. Parameters: path, binary=False, encoding='utf-8', line_range=None, chunk_size=None.",
                 func=fs_read
             )
             self.tools["fs_read"] = fs_read_tool
@@ -495,18 +616,22 @@ class CrewAIServer:
             self.tools["fs_list"] = fs_list_tool
 
             # 4.5 File Search Tool
-            def fs_search(query, path=".", file_pattern="*", max_results=100):
+            def fs_search(query, path=".", file_pattern="*", max_results=100, regex_flags=0, binary=False, max_file_size=None, recursive=True):
                 """
-                Search for files or content in files
+                Search for files or content in files with enhanced regex capabilities
 
                 Args:
-                    query: Text to search for
+                    query: Text or regular expression pattern to search for
                     path: Directory to search in
                     file_pattern: Glob pattern to filter files
                     max_results: Maximum number of results to return
+                    regex_flags: Flags for regex (0=none, 2=IGNORECASE, 8=MULTILINE, etc. - add values for multiple flags)
+                    binary: Whether to search in binary files
+                    max_file_size: Maximum file size to search in bytes (default 2MB)
+                    recursive: Whether to search recursively in subdirectories
 
                 Returns:
-                    Matching files and content
+                    Matching files and content with detailed metadata
                 """
                 validated_path, error = validate_path(path)
                 if error:
@@ -540,22 +665,140 @@ class CrewAIServer:
                             return
 
                         # Skip files larger than limit
-                        size_limit = 2 * 1024 * 1024  # 2MB
+                        size_limit = max_file_size or 2 * 1024 * 1024  # Default to 2MB if not specified
                         if os.path.getsize(file_path) > size_limit:
                             return
-
+                            
+                        # Function to check if file is binary
+                        def is_binary_file(file_path, sample_size=8000):
+                            """Check if a file is binary by examining a sample of its content."""
+                            try:
+                                with open(file_path, 'rb') as f:
+                                    sample = f.read(sample_size)
+                                return b'\0' in sample or not all(c < 127 for c in sample if c > 31)
+                            except:
+                                return False
+                                
+                        # Check if file is binary
+                        is_file_binary = is_binary_file(file_path)
+                        
+                        # Handle binary search if requested
+                        if binary and is_file_binary:
+                            try:
+                                with open(file_path, 'rb') as f:
+                                    binary_content = f.read()
+                                
+                                # Convert query to bytes if it's a string
+                                query_bytes = query.encode('utf-8') if isinstance(query, str) else query
+                                
+                                # Simple binary search (no regex in binary mode)
+                                matches = []
+                                start = 0
+                                while start < len(binary_content):
+                                    pos = binary_content.find(query_bytes, start)
+                                    if pos == -1:
+                                        break
+                                        
+                                    # Get some context bytes before and after
+                                    context_start = max(0, pos - 20)
+                                    context_end = min(len(binary_content), pos + len(query_bytes) + 20)
+                                    context_bytes = binary_content[context_start:context_end]
+                                    
+                                    matches.append({
+                                        "position": pos,
+                                        "context_hex": context_bytes.hex(),
+                                        "match_hex": binary_content[pos:pos+len(query_bytes)].hex()
+                                    })
+                                    
+                                    if len(matches) >= 10:  # Limit matches per binary file
+                                        break
+                                        
+                                    start = pos + len(query_bytes)
+                                    
+                                if matches:
+                                    result_count += 1
+                                    results.append({
+                                        "file": os.path.relpath(file_path, validated_path),
+                                        "path": file_path,
+                                        "is_binary": True,
+                                        "size": os.path.getsize(file_path),
+                                        "matches": matches,
+                                        "match_count": len(matches)
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Error searching in binary file {file_path}: {e}")
+                            return
+                        
+                        # Skip binary files in text mode unless binary search is enabled
+                        if is_file_binary and not binary:
+                            return
+                            
                         try:
                             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                                 content = f.read()
 
                             matches = []
-                            if is_regex:
+                            # Handle regex search with specified flags
+                            if regex_flags > 0:
+                                # Create pattern with specified flags
+                                try:
+                                    pattern = re.compile(query, regex_flags)
+                                    for match in pattern.finditer(content):
+                                        start_idx = max(0, match.start() - 50)
+                                        end_idx = min(len(content), match.end() + 50)
+
+                                        # Find line and column
+                                        line_number = content.count('\n', 0, match.start()) + 1
+                                        line_start = content.rfind('\n', 0, match.start()) + 1
+                                        column = match.start() - line_start + 1
+                                        
+                                        # Get the whole line
+                                        line_end = content.find('\n', match.start())
+                                        if line_end == -1:
+                                            line_end = len(content)
+                                        line_content = content[line_start:line_end]
+
+                                        # Extract context
+                                        context = content[start_idx:end_idx]
+                                        
+                                        # Get match groups
+                                        groups = match.groups()
+                                        named_groups = match.groupdict() if hasattr(match, 'groupdict') else {}
+
+                                        matches.append({
+                                            "text": match.group(0),
+                                            "line": line_number,
+                                            "column": column,
+                                            "line_content": line_content,
+                                            "context": context,
+                                            "start": match.start(),
+                                            "end": match.end(),
+                                            "groups": groups,
+                                            "named_groups": named_groups
+                                        })
+                                        
+                                        if len(matches) >= max_results:
+                                            break
+                                except re.error as e:
+                                    # Fall back to standard search on regex error
+                                    logger.warning(f"Invalid regex pattern: {e}. Falling back to standard search.")
+                                    is_regex = False
+                            # Standard regex search without additional flags
+                            elif is_regex:
                                 for match in pattern.finditer(content):
                                     start_idx = max(0, match.start() - 50)
                                     end_idx = min(len(content), match.end() + 50)
 
                                     # Find line numbers
                                     line_number = content.count('\n', 0, match.start()) + 1
+                                    line_start = content.rfind('\n', 0, match.start()) + 1
+                                    column = match.start() - line_start + 1
+                                    
+                                    # Get the whole line
+                                    line_end = content.find('\n', match.start())
+                                    if line_end == -1:
+                                        line_end = len(content)
+                                    line_content = content[line_start:line_end]
 
                                     # Extract context
                                     context = content[start_idx:end_idx]
@@ -563,10 +806,15 @@ class CrewAIServer:
                                     matches.append({
                                         "text": match.group(),
                                         "line": line_number,
+                                        "column": column,
+                                        "line_content": line_content,
                                         "context": context,
                                         "start": match.start(),
                                         "end": match.end()
                                     })
+                                    
+                                    if len(matches) >= max_results:
+                                        break
                             else:
                                 # Plain text search
                                 start = 0
@@ -578,8 +826,16 @@ class CrewAIServer:
                                     if pos == -1:
                                         break
 
-                                    # Find line numbers
+                                    # Find line and column
                                     line_number = content.count('\n', 0, pos) + 1
+                                    line_start = content.rfind('\n', 0, pos) + 1
+                                    column = pos - line_start + 1
+                                    
+                                    # Get the whole line
+                                    line_end = content.find('\n', pos)
+                                    if line_end == -1:
+                                        line_end = len(content)
+                                    line_content = content[line_start:line_end]
 
                                     # Extract context
                                     start_idx = max(0, pos - 50)
@@ -589,12 +845,17 @@ class CrewAIServer:
                                     matches.append({
                                         "text": content[pos:pos + len(query)],
                                         "line": line_number,
+                                        "column": column,
+                                        "line_content": line_content,
                                         "context": context,
                                         "start": pos,
                                         "end": pos + len(query)
                                     })
 
                                     start = pos + len(query)
+                                    
+                                    if len(matches) >= max_results:
+                                        break
 
                             if matches:
                                 results.append({
@@ -643,7 +904,7 @@ class CrewAIServer:
 
             fs_search_tool = Tool(
                 name="fs_search",
-                description="Search for files or content within files. Supports regex patterns and file filtering.",
+                description="Search for files or content in files with advanced regex capabilities, binary search, and detailed results. Parameters: query, path, file_pattern, max_results, regex_flags, binary, max_file_size, recursive.",
                 func=fs_search
             )
             self.tools["fs_search"] = fs_search_tool
@@ -2934,6 +3195,237 @@ class CrewAIServer:
             }
         }
 
+    def handle_codebase_index(self, payload):
+        """
+        Handle codebase indexing operations
+        
+        Args:
+            payload (dict): Parameters for the indexing operation
+                - action: The specific action to perform (index, search, etc.)
+                - Other parameters specific to each action
+                
+        Returns:
+            dict: Result of the indexing operation
+        """
+        if not self.codebase_indexer:
+            return {
+                "status": "error", 
+                "message": "Codebase indexer is not available"
+            }
+            
+        try:
+            action = payload.get("action")
+            if not action:
+                return {"status": "error", "message": "No action specified"}
+                
+            logger.info(f"Executing codebase indexer action: {action}")
+            
+            if action == "estimate_files":
+                # Count files that would be indexed to get a total estimation
+                try:
+                    total_files = self.codebase_indexer.estimate_files()
+                    return {
+                        "status": "success",
+                        "total_files": total_files
+                    }
+                except Exception as e:
+                    logger.error(f"Error estimating files: {e}")
+                    return {
+                        "status": "error",
+                        "message": f"Error estimating files: {str(e)}"
+                    }
+            
+            elif action == "index":
+                # Perform indexing of the codebase
+                force = payload.get("force", False)
+                max_file_size = payload.get("max_file_size", 1024 * 1024)  # Default 1MB
+                with_progress = payload.get("with_progress", False)
+                
+                # If progress tracking is requested, use the progress callback
+                if with_progress:
+                    # Define a progress callback that will send progress to the UI
+                    def progress_callback(processed_files, total_files, current_file=None):
+                        # If a progress_callback was provided in the payload, call it
+                        if callable(payload.get("progress_callback")):
+                            payload["progress_callback"]({
+                                "processed_files": processed_files,
+                                "total_files": total_files,
+                                "current_file": current_file
+                            })
+                        
+                        # Skip simulated progress - don't report to UI
+                        if current_file and ("Simulated" in current_file or "simulation" in current_file):
+                            return
+                            
+                        # Print progress directly to stdout where the extension can capture it
+                        try:
+                            # Create JSON data that the extension can parse
+                            progress_data = {
+                                "processed_files": processed_files,
+                                "total_files": total_files,
+                                "current_file": current_file or ""
+                            }
+                            
+                            # Print with special marker that the extension will look for
+                            # This will be captured by the extension process
+                            message = f"PROGRESS_UPDATE: {json.dumps(progress_data)}"
+                            print(message, flush=True)
+                            # Add a newline to ensure messages don't get combined
+                            sys.stdout.flush()
+                            print(f"DEBUG_INDEXER: Sent progress update: {processed_files}/{total_files}", flush=True)
+                            
+                            # Also log progress for diagnostics
+                            progress_pct = int(processed_files/max(total_files, 1)*100)
+                            logger.info(f"Indexing progress: {processed_files}/{total_files} files ({progress_pct}%) - Current: {current_file}")
+                        except Exception as e:
+                            logger.error(f"Error sending progress update: {e}")
+                    
+                    # Call index_workspace with progress tracking
+                    success = self.codebase_indexer.index_workspace(
+                        force=force, 
+                        max_file_size=max_file_size,
+                        progress_callback=progress_callback
+                    )
+                else:
+                    # Call without progress tracking
+                    success = self.codebase_indexer.index_workspace(force=force, max_file_size=max_file_size)
+                
+                index_status = self.codebase_indexer.get_index_status()
+                
+                return {
+                    "status": "success" if success else "error",
+                    "message": "Indexing completed successfully" if success else "Indexing failed",
+                    "index_status": index_status
+                }
+                
+            elif action == "search":
+                # Search for symbols in the codebase
+                query = payload.get("query")
+                symbol_type = payload.get("symbol_type")
+                language = payload.get("language")
+                limit = payload.get("limit", 100)
+                
+                if not query:
+                    return {"status": "error", "message": "Query parameter is required"}
+                    
+                symbols = self.codebase_indexer.search_symbols(
+                    query=query,
+                    symbol_type=symbol_type,
+                    language=language,
+                    limit=limit
+                )
+                
+                return {
+                    "status": "success",
+                    "symbols": symbols,
+                    "count": len(symbols)
+                }
+                
+            elif action == "find_references":
+                # Find references to a symbol
+                symbol_name = payload.get("symbol_name")
+                file_path = payload.get("file_path")
+                
+                if not symbol_name:
+                    return {"status": "error", "message": "symbol_name parameter is required"}
+                    
+                references = self.codebase_indexer.find_references(
+                    symbol_name=symbol_name,
+                    file_path=file_path
+                )
+                
+                return {
+                    "status": "success",
+                    "references": references,
+                    "count": len(references)
+                }
+                
+            elif action == "get_dependencies":
+                # Get dependencies of a file
+                file_path = payload.get("file_path")
+                
+                if not file_path:
+                    return {"status": "error", "message": "file_path parameter is required"}
+                    
+                dependencies = self.codebase_indexer.get_dependencies(file_path)
+                
+                return {
+                    "status": "success",
+                    "dependencies": dependencies,
+                    "count": len(dependencies)
+                }
+                
+            elif action == "get_dependents":
+                # Get files that depend on a module
+                module_name = payload.get("module_name")
+                
+                if not module_name:
+                    return {"status": "error", "message": "module_name parameter is required"}
+                    
+                dependents = self.codebase_indexer.get_dependents(module_name)
+                
+                return {
+                    "status": "success",
+                    "dependents": dependents,
+                    "count": len(dependents)
+                }
+                
+            elif action == "get_file_symbols":
+                # Get symbols defined in a file
+                file_path = payload.get("file_path")
+                
+                if not file_path:
+                    return {"status": "error", "message": "file_path parameter is required"}
+                    
+                symbols = self.codebase_indexer.get_file_symbols(file_path)
+                
+                return {
+                    "status": "success",
+                    "symbols": symbols,
+                    "count": len(symbols)
+                }
+                
+            elif action == "get_symbol_by_location":
+                # Get symbol at a specific location
+                file_path = payload.get("file_path")
+                line = payload.get("line")
+                
+                if not file_path or line is None:
+                    return {"status": "error", "message": "file_path and line parameters are required"}
+                    
+                symbol = self.codebase_indexer.get_symbol_by_location(file_path, line)
+                
+                return {
+                    "status": "success",
+                    "symbol": symbol,
+                    "found": symbol is not None
+                }
+                
+            elif action == "clear_index":
+                # Clear the index
+                success = self.codebase_indexer.clear_index()
+                
+                return {
+                    "status": "success" if success else "error",
+                    "message": "Index cleared successfully" if success else "Failed to clear index"
+                }
+                
+            elif action == "status":
+                # Get the current status of the index
+                status = self.codebase_indexer.get_index_status()
+                
+                return {
+                    "status": "success",
+                    "index_status": status
+                }
+                
+            else:
+                return {"status": "error", "message": f"Unknown codebase index action: {action}"}
+                
+        except Exception as e:
+            logger.error(f"Error in codebase indexing operation: {e}", exc_info=True)
+            return {"status": "error", "message": f"Codebase indexing error: {str(e)}"}
+
     def agent_to_agent_message(self, from_agent_id, to_agent_id, message, context=None):
         """
         Facilitate direct agent-to-agent communication
@@ -4411,6 +4903,8 @@ You can access these tools by mentioning them in your responses. Remember that y
                     message=payload.get("message"),
                     context=payload.get("context")
                 )
+            elif command_lower == "codebase_index":
+                return self.handle_codebase_index(payload)
             else:
                 logger.error(f"Unknown command: {command}")
                 return {"status": "error", "message": f"Unknown command: {command}"}

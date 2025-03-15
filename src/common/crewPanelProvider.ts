@@ -291,6 +291,29 @@ export class CrewPanelProvider implements vscode.WebviewViewProvider {
                 case 'RESTART_EXTENSION':
                     vscode.commands.executeCommand('workbench.action.reloadWindow');
                     break;
+                case 'EXECUTE_TOOL':
+                    try {
+                        const { toolName, params } = message.payload;
+                        traceInfo(`Executing tool: ${toolName} with params: ${JSON.stringify(params)}`);
+                        
+                        const result = await vscode.commands.executeCommand('mightydev.executeAgentTool', toolName, params);
+                        
+                        this.postMessage({
+                            type: 'EXECUTE_TOOL_RESULT',
+                            toolName,
+                            success: true,
+                            result
+                        });
+                    } catch (error) {
+                        traceError(`Error executing tool: ${error}`);
+                        this.postMessage({
+                            type: 'EXECUTE_TOOL_RESULT',
+                            toolName: message.payload?.toolName,
+                            success: false,
+                            error: error instanceof Error ? error.message : String(error)
+                        });
+                    }
+                    break;
                 default:
                     traceInfo(`Unhandled message type: ${message.type}`);
             }

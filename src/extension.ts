@@ -36,6 +36,7 @@ import {
     MessagingTool,
     ShellExecutionTool,
     CodeDiffTool,
+    CodebaseIndexerTool,
     Tool
 } from './common/tools';
 import { 
@@ -101,6 +102,13 @@ async function initializeTools(workspaceRoot: string | undefined): Promise<void>
         if (codeDiffTool && codeDiffTool.name) {
             agentTools.set(codeDiffTool.name, codeDiffTool);
             traceInfo(`Registered tool: ${codeDiffTool.name}`);
+        }
+        
+        // Initialize CodebaseIndexerTool
+        const codebaseIndexerTool = new CodebaseIndexerTool(workspaceRoot);
+        if (codebaseIndexerTool && codebaseIndexerTool.name) {
+            agentTools.set(codebaseIndexerTool.name, codebaseIndexerTool);
+            traceInfo(`Registered tool: ${codebaseIndexerTool.name}`);
         }
     } catch (error) {
         traceError('Error initializing tools:', error);
@@ -324,11 +332,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                         throw new Error(`Tool '${toolName}' not found`);
                     }
                     
+                    // Extra logging to debug the tool invocation
+                    traceInfo(`Executing tool ${toolName} with params: ${JSON.stringify(params)}`);
+                    
                     const result = await tool.execute(params);
                     return result;
                 } catch (error) {
                     traceError(`Error executing tool '${toolName}':`, error);
                     throw error;
+                }
+            }),
+            
+            // Add command to handle progress updates for codebase indexer
+            vscode.commands.registerCommand('crewPanelProvider.updateProgress', async (message: any) => {
+                try {
+                    if (crewPanelProvider) {
+                        crewPanelProvider.postMessage(message);
+                        return { success: true };
+                    }
+                    return { success: false, message: 'CrewPanelProvider not initialized' };
+                } catch (error) {
+                    traceError('Error updating progress:', error);
+                    return { success: false, message: String(error) };
                 }
             })
         );

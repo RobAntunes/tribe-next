@@ -5,6 +5,7 @@ import * as fs from 'fs-extra';
 import * as cp from 'child_process';
 import * as crypto from 'crypto';
 import { traceError, traceInfo, traceDebug } from './log/logging';
+import { window } from 'vscode';
 import * as diff from 'diff';
 // We now have @types/diff installed, so this is not needed anymore
 
@@ -304,6 +305,458 @@ export class ShellExecutionTool implements Tool {
  * Enhanced Code Diff Tool for comprehensive code comparison, diffing, and patching
  * Provides advanced diffing capabilities with structured output and visualization
  */
+/**
+ * Codebase Indexer Tool for analyzing code structure and relationships
+ * Provides interface to search, find symbols, references, and dependencies
+ */
+export class CodebaseIndexerTool implements Tool {
+    name = 'codebase_index';
+    description = 'Index, search, and analyze codebase structure including symbols, references, and dependencies';
+    private _workspaceRoot: string;
+    private _statusBarItem: vscode.StatusBarItem | undefined;
+    
+    usage = `Use this tool to:
+- Index and analyze the codebase structure
+- Search for symbols, classes, and functions
+- Find references to specific symbols
+- Discover dependencies between files
+- Navigate the code more efficiently`;
+
+    examples = [
+        '{ "action": "index", "force": false, "max_file_size": 1048576 }',
+        '{ "action": "search", "query": "UserService", "symbol_type": "class", "language": "typescript" }',
+        '{ "action": "find_references", "symbol_name": "fetchData" }',
+        '{ "action": "get_dependencies", "file_path": "src/services/api.ts" }',
+        '{ "action": "get_file_symbols", "file_path": "src/models/user.ts" }'
+    ];
+
+    parameters = [
+        {
+            name: 'action',
+            type: 'string',
+            description: 'The indexing action to perform (index, search, find_references, get_dependencies, get_file_symbols, etc.)',
+            required: true
+        },
+        {
+            name: 'query',
+            type: 'string',
+            description: 'Search query for symbol names',
+            required: false
+        },
+        {
+            name: 'symbol_type',
+            type: 'string',
+            description: 'Filter by symbol type (class, function, method, etc.)',
+            required: false
+        },
+        {
+            name: 'language',
+            type: 'string',
+            description: 'Filter by programming language',
+            required: false
+        },
+        {
+            name: 'symbol_name',
+            type: 'string',
+            description: 'Symbol name to find references for',
+            required: false
+        },
+        {
+            name: 'file_path',
+            type: 'string',
+            description: 'File path to analyze',
+            required: false
+        },
+        {
+            name: 'force',
+            type: 'boolean',
+            description: 'Force reindexing of all files',
+            required: false,
+            default: false
+        },
+        {
+            name: 'max_file_size',
+            type: 'number',
+            description: 'Maximum file size to index in bytes',
+            required: false,
+            default: 1048576
+        },
+        {
+            name: 'line',
+            type: 'number',
+            description: 'Line number for location-based queries',
+            required: false
+        }
+    ];
+    
+    constructor(workspaceRoot: string) {
+        this._workspaceRoot = workspaceRoot;
+        this._statusBarItem = window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+        this._statusBarItem.text = '$(database) Codebase Index: Ready';
+        this._statusBarItem.tooltip = 'Codebase indexing status';
+        this._statusBarItem.show();
+    }
+    
+    async execute(params: Record<string, any>): Promise<any> {
+        const { action } = params;
+        
+        try {
+            switch (action) {
+                case 'index':
+                    return await this._performIndexing(params);
+                case 'search':
+                    return await this._searchSymbols(params);
+                case 'find_references':
+                    return await this._findReferences(params);
+                case 'get_dependencies':
+                    return await this._getDependencies(params);
+                case 'get_dependents':
+                    return await this._getDependents(params);
+                case 'get_file_symbols':
+                    return await this._getFileSymbols(params);
+                case 'get_symbol_by_location':
+                    return await this._getSymbolByLocation(params);
+                case 'clear_index':
+                    return await this._clearIndex();
+                case 'status':
+                    return await this._getStatus();
+                default:
+                    return { error: `Unknown action: ${action}` };
+            }
+        } catch (error) {
+            traceError(`Error in CodebaseIndexerTool: ${error}`);
+            return { error: String(error) };
+        }
+    }
+    
+    /**
+     * Perform codebase indexing
+     */
+    private async _performIndexing(params: Record<string, any>): Promise<any> {
+        this._updateStatusBar('$(sync~spin) Indexing codebase...', 'Codebase indexing in progress');
+        traceInfo("Starting codebase indexing with progress tracking");
+        
+        try {
+            const force = params.force === true;
+            const max_file_size = params.max_file_size || 1048576;
+            const with_progress = true; // Always use progress tracking
+            
+            let result;
+            
+            // Start by sending a message to get an estimate of total files
+            const estimateResult = await this._estimateFiles();
+            traceInfo(`Estimated files to index: ${estimateResult.total_files || 'unknown'}`);
+            
+            // Reset for a real indexing run - don't use any cached values
+            this._updateStatusBar('$(sync~spin) Indexing codebase...', 'Preparing indexing operation');
+            
+            // Setup a manual progress window as a backup
+            vscode.window.withProgress({
+                location: vscode.ProgressLocation.Notification,
+                title: "Indexing Codebase",
+                cancellable: true
+            }, async (progress, _token) => {
+                // Show the initial progress
+                progress.report({ 
+                    message: "Starting indexing...",
+                    increment: 0 
+                });
+                
+                // Setup a progress listener
+                // Store last reported percentage to improve progress updates
+                let lastPercentage = 0;
+                
+                const progressListener = (data: any) => {
+                    if (data && data.processed_files !== undefined) {
+                        // Send progress update to the dashboard
+                        this._sendProgressUpdate(data);
+                        
+                        // Also update the progress indicator
+                        const total = data.total_files || estimateResult.total_files || 100;
+                        const percentage = Math.min(Math.round((data.processed_files / total) * 100), 100);
+                        const message = data.current_file ? 
+                            `Processing: ${data.current_file}` :
+                            `Indexed ${data.processed_files}/${total} files`;
+                        
+                        // Calculate the increment since last update
+                        const increment = Math.max(1, percentage - lastPercentage);
+                        
+                        // Store the current percentage
+                        lastPercentage = percentage;
+                        
+                        progress.report({ 
+                            message,
+                            increment
+                        });
+                    }
+                };
+                
+                // Call the Python indexer with progress tracking
+                // Force true to ensure a complete reindex
+                result = await this._callCrewAITool('codebase_index', {
+                    action: 'index',
+                    force: true, // Always force reindex when user requests it
+                    max_file_size,
+                    with_progress: true,
+                    progress_callback: progressListener
+                });
+                
+                return result;
+            });
+
+            // If we don't have a result from the progress window, do a standard indexing
+            if (!result) {
+                result = await this._callCrewAITool('codebase_index', {
+                    action: 'index',
+                    force,
+                    max_file_size
+                });
+            }
+            
+            if (result.status === 'success') {
+                this._updateStatusBar('$(database) Indexing complete', `Indexed ${result.index_status?.file_count || 0} files with ${result.index_status?.symbol_count || 0} symbols`);
+                setTimeout(() => {
+                    this._updateStatusBar('$(database) Codebase Index: Ready', 'Codebase indexing complete');
+                }, 5000);
+            } else {
+                this._updateStatusBar('$(error) Indexing failed', result.message || 'Error during indexing');
+            }
+            
+            return result;
+        } catch (error) {
+            this._updateStatusBar('$(error) Indexing failed', String(error));
+            throw error;
+        }
+    }
+    
+    /**
+     * Send a progress update to the webview
+     */
+    private _sendProgressUpdate(data: any): void {
+        // Only process real updates, not simulation
+        if (data.current_file && data.current_file.includes('Simulated')) {
+            traceInfo(`Ignoring simulated progress update: ${JSON.stringify(data)}`);
+            return;
+        }
+        
+        // Use the command to update progress regardless of active editor
+        vscode.commands.executeCommand('crewPanelProvider.updateProgress', {
+            type: 'CODEBASE_INDEX_PROGRESS',
+            payload: data
+        }).then(undefined, (error: Error) => {
+            traceError(`Error sending progress update: ${error}`);
+        });
+        
+        // Update the status bar with the progress information
+        if (data.processed_files !== undefined && data.total_files) {
+            const progress = Math.min(Math.round((data.processed_files / data.total_files) * 100), 100);
+            const currentFile = data.current_file ? ` - ${data.current_file}` : '';
+            this._updateStatusBar(
+                `$(sync~spin) Indexing: ${progress}%`,
+                `Indexed ${data.processed_files}/${data.total_files} files${currentFile}`
+            );
+        }
+    }
+    
+    /**
+     * Estimate total files to be indexed
+     */
+    private async _estimateFiles(): Promise<any> {
+        try {
+            const result = await this._callCrewAITool('codebase_index', {
+                action: 'estimate_files'
+            });
+            
+            if (result.status === 'success' && result.total_files) {
+                if (vscode.window.activeTextEditor) {
+                    vscode.commands.executeCommand('crewPanelProvider.updateProgress', {
+                        type: 'CODEBASE_ESTIMATE_FILES',
+                        payload: { total_files: result.total_files }
+                    });
+                }
+            }
+            
+            return result;
+        } catch (error) {
+            traceError(`Error estimating total files: ${error}`);
+            return { status: 'error', message: String(error) };
+        }
+    }
+    
+    /**
+     * Search for symbols in the codebase
+     */
+    private async _searchSymbols(params: Record<string, any>): Promise<any> {
+        const { query, symbol_type, language, limit } = params;
+        
+        if (!query) {
+            return { error: 'Query parameter is required' };
+        }
+        
+        return await this._callCrewAITool('codebase_index', {
+            action: 'search',
+            query,
+            symbol_type,
+            language,
+            limit
+        });
+    }
+    
+    /**
+     * Find references to a symbol
+     */
+    private async _findReferences(params: Record<string, any>): Promise<any> {
+        const { symbol_name, file_path } = params;
+        
+        if (!symbol_name) {
+            return { error: 'symbol_name parameter is required' };
+        }
+        
+        return await this._callCrewAITool('codebase_index', {
+            action: 'find_references',
+            symbol_name,
+            file_path
+        });
+    }
+    
+    /**
+     * Get dependencies of a file
+     */
+    private async _getDependencies(params: Record<string, any>): Promise<any> {
+        const { file_path } = params;
+        
+        if (!file_path) {
+            return { error: 'file_path parameter is required' };
+        }
+        
+        return await this._callCrewAITool('codebase_index', {
+            action: 'get_dependencies',
+            file_path
+        });
+    }
+    
+    /**
+     * Get files that depend on a module
+     */
+    private async _getDependents(params: Record<string, any>): Promise<any> {
+        const { module_name } = params;
+        
+        if (!module_name) {
+            return { error: 'module_name parameter is required' };
+        }
+        
+        return await this._callCrewAITool('codebase_index', {
+            action: 'get_dependents',
+            module_name
+        });
+    }
+    
+    /**
+     * Get symbols defined in a file
+     */
+    private async _getFileSymbols(params: Record<string, any>): Promise<any> {
+        const { file_path } = params;
+        
+        if (!file_path) {
+            return { error: 'file_path parameter is required' };
+        }
+        
+        return await this._callCrewAITool('codebase_index', {
+            action: 'get_file_symbols',
+            file_path
+        });
+    }
+    
+    /**
+     * Get symbol at a specific location
+     */
+    private async _getSymbolByLocation(params: Record<string, any>): Promise<any> {
+        const { file_path, line } = params;
+        
+        if (!file_path) {
+            return { error: 'file_path parameter is required' };
+        }
+        
+        return await this._callCrewAITool('codebase_index', {
+            action: 'get_symbol_by_location',
+            file_path,
+            line
+        });
+    }
+    
+    /**
+     * Clear the index
+     */
+    private async _clearIndex(): Promise<any> {
+        this._updateStatusBar('$(sync~spin) Clearing index...', 'Clearing codebase index');
+        
+        try {
+            const result = await this._callCrewAITool('codebase_index', {
+                action: 'clear_index'
+            });
+            
+            if (result.status === 'success') {
+                this._updateStatusBar('$(database) Index cleared', 'Codebase index cleared successfully');
+                setTimeout(() => {
+                    this._updateStatusBar('$(database) Codebase Index: Ready', 'Codebase index cleared');
+                }, 5000);
+            } else {
+                this._updateStatusBar('$(error) Failed to clear index', result.message || 'Error clearing index');
+            }
+            
+            return result;
+        } catch (error) {
+            this._updateStatusBar('$(error) Failed to clear index', String(error));
+            throw error;
+        }
+    }
+    
+    /**
+     * Get index status
+     */
+    private async _getStatus(): Promise<any> {
+        return await this._callCrewAITool('codebase_index', {
+            action: 'status'
+        });
+    }
+    
+    /**
+     * Call a CrewAI tool
+     */
+    private async _callCrewAITool(toolName: string, params: any): Promise<any> {
+        try {
+            traceInfo(`Calling CrewAI tool ${toolName} with params: ${JSON.stringify(params)}`);
+            
+            // For codebase_index, we need to use the crewAI extension's sendRequest directly
+            const result = await vscode.commands.executeCommand('mightydev.relayToCrewAI', 'codebase_index', params);
+            traceInfo(`CrewAI tool ${toolName} response: ${JSON.stringify(result)}`);
+            return result;
+        } catch (error) {
+            traceError(`Error calling CrewAI tool ${toolName}: ${error}`);
+            throw error;
+        }
+    }
+    
+    /**
+     * Update the status bar
+     */
+    private _updateStatusBar(text: string, tooltip: string): void {
+        if (this._statusBarItem) {
+            this._statusBarItem.text = text;
+            this._statusBarItem.tooltip = tooltip;
+        }
+    }
+    
+    /**
+     * Dispose of resources
+     */
+    dispose(): void {
+        if (this._statusBarItem) {
+            this._statusBarItem.dispose();
+        }
+    }
+}
+
 export class CodeDiffTool implements Tool {
     name = 'code_diff';
     description = 'Advanced code diffing, comparison, and patch application tool';
@@ -510,6 +963,11 @@ export class CodeDiffTool implements Tool {
             
             // Apply patch
             const patchedContent = diff.applyPatch(targetContent, patch);
+            
+            // Ensure patched content is a string
+            if (patchedContent === false) {
+                throw new Error('Failed to apply patch due to conflicts');
+            }
             
             // Write patched content back to file
             await fs.writeFile(resolvedTarget, patchedContent);

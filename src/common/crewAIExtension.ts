@@ -17,6 +17,7 @@ export class CrewAIExtension {
     private _projectPath: string | undefined;
     private _pythonPath: string[] | undefined;
     private _learningSystem: LearningSystem | undefined;
+    private _outputListeners: ((data: string) => void)[] = [];
     
     constructor(private readonly _context: vscode.ExtensionContext) {
         // Initialize the project path from the workspace root if available
@@ -105,12 +106,32 @@ export class CrewAIExtension {
             
             // Handle stdout
             this._pythonProcess.stdout?.on('data', (data) => {
-                traceInfo(`CrewAI server: ${data.toString()}`);
+                const dataStr = data.toString();
+                traceInfo(`CrewAI server: ${dataStr}`);
+                
+                // Notify output listeners
+                this._outputListeners.forEach(listener => {
+                    try {
+                        listener(dataStr);
+                    } catch (error) {
+                        traceError(`Error in output listener: ${error}`);
+                    }
+                });
             });
             
             // Handle stderr
             this._pythonProcess.stderr?.on('data', (data) => {
-                traceError(`CrewAI server error: ${data.toString()}`);
+                const dataStr = data.toString();
+                traceError(`CrewAI server error: ${dataStr}`);
+                
+                // Notify output listeners for stderr as well - important for progress markers
+                this._outputListeners.forEach(listener => {
+                    try {
+                        listener(dataStr);
+                    } catch (error) {
+                        traceError(`Error in output listener: ${error}`);
+                    }
+                });
             });
             
             // Handle process exit
@@ -616,6 +637,23 @@ export class CrewAIExtension {
             traceError('Error ensuring project structure:', error);
             // Continue anyway, as we might be able to use the server without the structure
         }
+    }
+    
+    /**
+     * Register a listener for server output
+     * @param listener Function to call with each line of server output
+     * @returns Function to unregister the listener
+     */
+    public onServerOutput(listener: (data: string) => void): () => void {
+        this._outputListeners.push(listener);
+        
+        // Return a function to remove the listener
+        return () => {
+            const index = this._outputListeners.indexOf(listener);
+            if (index !== -1) {
+                this._outputListeners.splice(index, 1);
+            }
+        };
     }
     
     /**

@@ -1554,7 +1554,8 @@
 
 .development-content,
 .collaboration-content,
-.learning-content {
+.learning-content,
+.explorer-wrapper {
     flex: 1;
     padding: var(--space-4);
     overflow-y: auto;

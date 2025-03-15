@@ -170,8 +170,56 @@ export class ServerManager {
      * Setup event listeners for server events
      */
     private _setupEventListeners(): void {
-        // In a real implementation, this would listen for events from the server
-        // For now, we'll just set up handlers for when we manually trigger events
+        // Set up event listeners for server events
+        this._crewAIExtension.onServerOutput((data: string) => {
+            // Log all server output to help debugging
+            traceInfo(`SERVER OUTPUT: ${data}`);
+            
+            // Check for progress update markers
+            if (data.includes('PROGRESS_UPDATE:')) {
+                try {
+                    // Extract the JSON data from the marker - only process the current line
+                    const startIdx = data.indexOf('PROGRESS_UPDATE:') + 'PROGRESS_UPDATE:'.length;
+                    // Find the end of the JSON (before any new line or debug markers)
+                    let endIdx = data.indexOf('\n', startIdx);
+                    if (endIdx === -1) endIdx = data.length;
+                    
+                    const jsonStr = data.substring(startIdx, endIdx).trim();
+                    
+                    traceInfo(`Found progress data: ${jsonStr}`);
+                    
+                    try {
+                        const progressData = JSON.parse(jsonStr);
+                        
+                        // No longer need to skip simulated progress as it's been removed
+                        // Just log the progress data
+                        traceInfo(`Processing progress update: ${JSON.stringify(progressData)}`);
+                        
+                        // Send progress update to the webview
+                        vscode.commands.executeCommand('crewPanelProvider.updateProgress', {
+                            type: 'CODEBASE_INDEX_PROGRESS',
+                            payload: progressData
+                        }).then(() => {
+                            traceInfo(`Successfully sent progress update to webview: ${JSON.stringify(progressData)}`);
+                        }, (error: Error) => {
+                            traceError(`Error sending progress update from server output: ${error}`);
+                        });
+                        
+                        // Log that we processed a progress update
+                        traceInfo(`Processed progress update: ${JSON.stringify(progressData)}`);
+                    } catch (jsonError) {
+                        traceError(`Error parsing JSON from progress update: ${jsonError}. String was: "${jsonStr}"`);
+                    }
+                } catch (error) {
+                    traceError(`Error processing progress update: ${error}`);
+                }
+            }
+            
+            // Also check for DEBUG markers
+            if (data.includes('DEBUG_INDEXER:')) {
+                traceInfo(`DEBUG FROM INDEXER: ${data}`);
+            }
+        });
     }
     
     /**

@@ -27,7 +27,8 @@ import {
 	IterationCcw,
 	Flag,
 	Settings,
-	AlertTriangle
+	AlertTriangle,
+	Database
 } from "lucide-react";
 import { GetStarted } from './components/GetStarted';
 import './styles.css';
@@ -52,6 +53,7 @@ import { AgentAutonomyPanel } from './components/AgentAutonomyPanel';
 import { EnvironmentManager } from './components/EnvironmentManager';
 import { QuickActionsPanel } from './components/QuickActionsPanel/index';
 import { ServerError } from './components/ServerError/index';
+import { CodebaseExplorer } from './components/CodebaseExplorer/index';
 
 // Define interfaces for Project Management System
 interface PMSTask {
@@ -234,7 +236,7 @@ interface WorkspaceStats {
 }
 
 // Define our tab types
-type TabType = 'get-started' | 'main-dashboard' | 'development-hub' | 'collaboration-center' | 'learning-improvement';
+type TabType = 'get-started' | 'main-dashboard' | 'development-hub' | 'collaboration-center' | 'learning-improvement' | 'codebase-explorer';
 
 interface Dependency {
 	name: string;
@@ -416,8 +418,8 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 
 	// Tab configuration - always include learning-improvement for environment access
 	const tabOrder: TabType[] = projectState.initialized
-		? ['main-dashboard', 'development-hub', 'collaboration-center', 'learning-improvement']
-		: ['get-started', 'learning-improvement'];
+		? ['main-dashboard', 'development-hub', 'collaboration-center', 'learning-improvement', 'codebase-explorer']
+		: ['get-started', 'learning-improvement', 'codebase-explorer'];
 		
 	// Define state variables for subtabs
 	const [developmentSubTab, setDevelopmentSubTab] = useState<'tasks' | 'actions' | 'changes' | 'checkpoints'>('tasks');
@@ -478,6 +480,12 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 				}
 			},
 			disabled: false // Never disabled so environment can be accessed
+		},
+		'codebase-explorer': {
+			icon: <Database size={20} />,
+			label: 'Codebase',
+			onClick: () => setActiveTab('codebase-explorer'),
+			disabled: false // Never disabled
 		}
 	};
 
@@ -1172,8 +1180,17 @@ export const CrewPanel: React.FC<CrewPanelProps> = ({ activeFlow, suggestedFlows
 				/>
 			);
 		}
+		
+		// Codebase Explorer tab - available regardless of initialization state
+		if (activeTab === 'codebase-explorer') {
+			return (
+				<div className="explorer-wrapper">
+					<CodebaseExplorer />
+				</div>
+			);
+		}
 
-		// Require initialization for all tabs except learning-improvement (for env manager)
+		// Require initialization for all tabs except learning-improvement and codebase-explorer
 		if (!projectState.initialized && activeTab !== 'learning-improvement') {
 			return (
 				<div className="not-initialized">

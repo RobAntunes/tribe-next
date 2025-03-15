@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { getVsCodeApi } from '../../../vscode';
 import { Agent } from '../types';
-import { Clipboard, Wrench, Brain, Layers, Bolt, Settings } from 'lucide-react';
+import { Clipboard, Wrench, Brain, Layers, Bolt, Settings, Database } from 'lucide-react';
+import { CodebaseExplorer } from './CodebaseExplorer';
 import './ConsolidatedDashboard.css';
 
 // Import the original components
@@ -24,7 +25,7 @@ interface ConsolidatedDashboardProps {
   onToggleLearningSystem: (enabled: boolean) => void;
 }
 
-type DashboardTab = 'project' | 'tools' | 'learning' | 'overview';
+type DashboardTab = 'project' | 'tools' | 'learning' | 'overview' | 'codebase';
 
 export const ConsolidatedDashboard: React.FC<ConsolidatedDashboardProps> = ({
   agents,
@@ -116,6 +117,13 @@ export const ConsolidatedDashboard: React.FC<ConsolidatedDashboardProps> = ({
                 <p>No agents available. Please create an agent first.</p>
               </div>
             )}
+          </div>
+        );
+        
+      case 'codebase':
+        return (
+          <div className="tab-content-wrapper">
+            <CodebaseExplorer />
           </div>
         );
         
@@ -464,6 +472,14 @@ export const ConsolidatedDashboard: React.FC<ConsolidatedDashboardProps> = ({
         >
           <Brain size={16} />
           <span>Learning</span>
+        </button>
+        
+        <button
+          className={`tab-button ${activeTab === 'codebase' ? 'active' : ''}`}
+          onClick={() => setActiveTab('codebase')}
+        >
+          <Database size={16} />
+          <span>Codebase</span>
         </button>
       </div>
       
