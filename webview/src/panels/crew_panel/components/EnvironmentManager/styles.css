@@ -640,3 +640,44 @@
     flex-direction: column;
   }
 }
+
+.compatibility-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  color: var(--vscode-notificationsInfoIcon-foreground);
+  font-style: italic;
+}
+
+.add-key-container {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.add-key-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--vscode-button-background);
+  background: transparent;
+  color: var(--vscode-button-background);
+  font-size: 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.add-key-button:hover {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.disabled {
+  opacity: 0.6;
+  position: relative;
+}
