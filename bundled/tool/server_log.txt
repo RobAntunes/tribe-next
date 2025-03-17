@@ -1,0 +1,356 @@
+2025-03-17 13:33:04,807 - crewai_adapter - INFO - Added virtual environment to Python path: /Users/boss/Documents/MightyDev/extensions/tribe/crewai_venv/lib/python3.10/site-packages
+2025-03-17 13:33:04,807 - crewai_adapter - INFO - CrewAI version 0.105.0 imported successfully
+2025-03-17 13:33:04,807 - crewai_adapter - INFO - Successfully imported core CrewAI components
+2025-03-17 13:33:04,807 - crewai_server - INFO - Found existing server PID: 70375, attempting to terminate
+2025-03-17 13:33:04,807 - crewai_server - ERROR - Error terminating previous server: [Errno 3] No such process
+2025-03-17 13:33:04,808 - crewai_server - INFO - Wrote PID 72619 to ./.tribe/server_pid.txt
+2025-03-17 13:33:04,809 - crewai_server - INFO - Initialized CodebaseIndexer for workspace: .
+2025-03-17 13:33:04,809 - crewai_server - INFO - Using tools from crewai
+/Users/boss/Documents/MightyDev/extensions/tribe/crewai_venv/lib/python3.10/site-packages/pydantic/_internal/_fields.py:192: UserWarning: Field name "schema" in "StructuredJSONOutputToolSchema" shadows an attribute in parent "BaseModel"
+  warnings.warn(
+2025-03-17 13:33:04,824 - crewai_server - INFO - Created 14 BaseTool instances compatible with CrewAI: learning_system, project_management, metadata, shell_execution, code_indexing, code_editing, structured_json_output, extract_json, fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete
+2025-03-17 13:33:04,824 - crewai_server - INFO - Created default tools list with 14 tools: learning_system, project_management, metadata, shell_execution, code_indexing, code_editing, structured_json_output, extract_json, fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete
+2025-03-17 13:33:04,824 - crewai_server - ERROR - Error saving tool state: Object of type method is not JSON serializable
+2025-03-17 13:33:04,825 - crewai_server - INFO - Server process ID: 72619
+2025-03-17 13:33:04,825 - crewai_server - INFO - Working directory: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool
+2025-03-17 13:33:04,825 - crewai_server - INFO - Server file: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool/crewai_server.py
+2025-03-17 13:33:04,825 - crewai_server - INFO - Project path: .
+2025-03-17 13:33:04,825 - crewai_server - INFO - Parent of project path: 
+2025-03-17 13:33:04,825 - crewai_server - INFO - Found .tribe directory in parent folder: .tribe
+2025-03-17 13:33:04,825 - crewai_server - INFO - Contents of .tribe: ['server_pid.txt', 'tools', 'server_port.txt', 'codebase_index.db', 'agents.json', 'task_status.json', 'tasks.json', 'agent_performance.json', 'conflicts.json', 'workloads.json']
+2025-03-17 13:33:04,825 - crewai_server - INFO - Initial API key check - Anthropic: Present, OpenAI: Present
+2025-03-17 13:33:04,825 - crewai_server - INFO - Current file path: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool/crewai_server.py
+2025-03-17 13:33:04,825 - crewai_server - INFO - Extension directory: /Users/boss/Documents/MightyDev/extensions/tribe
+2025-03-17 13:33:04,825 - crewai_server - INFO - Project path from args: .
+2025-03-17 13:33:04,825 - crewai_server - INFO - Parent directory: /Users/boss/Documents/MightyDev/extensions
+2025-03-17 13:33:04,825 - crewai_server - INFO - Searching for .env files in: ['/Users/boss/Documents/MightyDev/extensions/tribe/.env', './.env', './.tribe/.env', '/Users/boss/Documents/MightyDev/extensions/.tribe/.env', '/Users/boss/Documents/MightyDev/extensions/.tribe/.env', '/Users/boss/.env']
+2025-03-17 13:33:04,825 - crewai_server - INFO - Found .env file at: /Users/boss/Documents/MightyDev/extensions/tribe/.env
+2025-03-17 13:33:04,825 - crewai_server - INFO - Reading env file: /Users/boss/Documents/MightyDev/extensions/tribe/.env (size: 310 bytes, modified: Mon Mar 17 10:59:46 2025)
+2025-03-17 13:33:04,825 - crewai_server - INFO - Successfully read 310 bytes from /Users/boss/Documents/MightyDev/extensions/tribe/.env
+2025-03-17 13:33:04,825 - crewai_server - INFO - File begins with: ANTHROPIC_...
+2025-03-17 13:33:04,825 - crewai_server - INFO - Found environment variable in /Users/boss/Documents/MightyDev/extensions/tribe/.env: ANTHROPIC_API_KEY
+2025-03-17 13:33:04,825 - crewai_server - INFO - Set environment variable: ANTHROPIC_API_KEY
+2025-03-17 13:33:04,825 - crewai_server - INFO - Found environment variable in /Users/boss/Documents/MightyDev/extensions/tribe/.env: OPENAI_API_KEY
+2025-03-17 13:33:04,825 - crewai_server - INFO - Set environment variable: OPENAI_API_KEY
+2025-03-17 13:33:04,825 - crewai_server - INFO - Using Anthropic Claude Sonnet as LLM provider
+2025-03-17 13:33:04,825 - crewai_server - INFO - Created agent with LLM configuration: {'provider': 'unknown', 'model': 'anthropic/claude-3-7-sonnet-latest', 'class': 'LLM'}
+2025-03-17 13:33:04,826 - crewai_server - INFO - Created agent using CrewAI's Agent for AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - WARNING - Failed to set agent attributes: "Agent" object has no field "metadata"
+2025-03-17 13:33:04,826 - crewai_server - INFO - Used fallback approach to set agent id and metadata
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool learning_system to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool project_management to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool metadata to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool shell_execution to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool code_indexing to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool code_editing to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool structured_json_output to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool extract_json to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool fs_read to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool fs_write to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool fs_update to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool fs_list to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool fs_search to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added default tool fs_delete to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool learning_system to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool project_management to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool metadata to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool shell_execution to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool code_indexing to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool code_editing to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool structured_json_output to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool extract_json to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool fs_read to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool fs_write to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool fs_update to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool fs_list to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool fs_search to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Added BaseTool fs_delete to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Agent AI Assistant tools: learning_system, project_management, metadata, shell_execution, code_indexing, code_editing, structured_json_output, extract_json, fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete
+2025-03-17 13:33:04,826 - crewai_server - INFO - Attached 14 tools to agent AI Assistant
+2025-03-17 13:33:04,826 - crewai_server - INFO - Attached tools to agent agent-1: []
+2025-03-17 13:33:04,826 - crewai_server - INFO - Loaded agent with ID 'agent-1'
+2025-03-17 13:33:04,827 - crewai_server - INFO - Server process ID: 72619
+2025-03-17 13:33:04,827 - crewai_server - INFO - Working directory: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool
+2025-03-17 13:33:04,827 - crewai_server - INFO - Server file: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool/crewai_server.py
+2025-03-17 13:33:04,827 - crewai_server - INFO - Project path: .
+2025-03-17 13:33:04,827 - crewai_server - INFO - Parent of project path: 
+2025-03-17 13:33:04,827 - crewai_server - INFO - Found .tribe directory in parent folder: .tribe
+2025-03-17 13:33:04,827 - crewai_server - INFO - Contents of .tribe: ['server_pid.txt', 'tools', 'server_port.txt', 'codebase_index.db', 'agents.json', 'task_status.json', 'tasks.json', 'agent_performance.json', 'conflicts.json', 'workloads.json']
+2025-03-17 13:33:04,827 - crewai_server - INFO - Initial API key check - Anthropic: Present, OpenAI: Present
+2025-03-17 13:33:04,827 - crewai_server - INFO - Current file path: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool/crewai_server.py
+2025-03-17 13:33:04,827 - crewai_server - INFO - Extension directory: /Users/boss/Documents/MightyDev/extensions/tribe
+2025-03-17 13:33:04,827 - crewai_server - INFO - Project path from args: .
+2025-03-17 13:33:04,827 - crewai_server - INFO - Parent directory: /Users/boss/Documents/MightyDev/extensions
+2025-03-17 13:33:04,827 - crewai_server - INFO - Searching for .env files in: ['/Users/boss/Documents/MightyDev/extensions/tribe/.env', './.env', './.tribe/.env', '/Users/boss/Documents/MightyDev/extensions/.tribe/.env', '/Users/boss/Documents/MightyDev/extensions/.tribe/.env', '/Users/boss/.env']
+2025-03-17 13:33:04,827 - crewai_server - INFO - Found .env file at: /Users/boss/Documents/MightyDev/extensions/tribe/.env
+2025-03-17 13:33:04,827 - crewai_server - INFO - Reading env file: /Users/boss/Documents/MightyDev/extensions/tribe/.env (size: 310 bytes, modified: Mon Mar 17 10:59:46 2025)
+2025-03-17 13:33:04,827 - crewai_server - INFO - Successfully read 310 bytes from /Users/boss/Documents/MightyDev/extensions/tribe/.env
+2025-03-17 13:33:04,827 - crewai_server - INFO - File begins with: ANTHROPIC_...
+2025-03-17 13:33:04,827 - crewai_server - INFO - Found environment variable in /Users/boss/Documents/MightyDev/extensions/tribe/.env: ANTHROPIC_API_KEY
+2025-03-17 13:33:04,827 - crewai_server - INFO - Set environment variable: ANTHROPIC_API_KEY
+2025-03-17 13:33:04,827 - crewai_server - INFO - Found environment variable in /Users/boss/Documents/MightyDev/extensions/tribe/.env: OPENAI_API_KEY
+2025-03-17 13:33:04,827 - crewai_server - INFO - Set environment variable: OPENAI_API_KEY
+2025-03-17 13:33:04,827 - crewai_server - INFO - Using Anthropic Claude Sonnet as LLM provider
+2025-03-17 13:33:04,827 - crewai_server - INFO - Created agent with LLM configuration: {'provider': 'unknown', 'model': 'anthropic/claude-3-7-sonnet-latest', 'class': 'LLM'}
+2025-03-17 13:33:04,827 - crewai_server - INFO - Created agent using CrewAI's Agent for Tester
+2025-03-17 13:33:04,827 - crewai_server - WARNING - Failed to set agent attributes: "Agent" object has no field "metadata"
+2025-03-17 13:33:04,827 - crewai_server - INFO - Used fallback approach to set agent id and metadata
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool learning_system to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool project_management to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool metadata to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool shell_execution to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool code_indexing to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool code_editing to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool structured_json_output to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool extract_json to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool fs_read to agent Tester
+2025-03-17 13:33:04,827 - crewai_server - INFO - Added default tool fs_write to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added default tool fs_update to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added default tool fs_list to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added default tool fs_search to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added default tool fs_delete to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool learning_system to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool project_management to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool metadata to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool shell_execution to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool code_indexing to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool code_editing to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool structured_json_output to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool extract_json to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool fs_read to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool fs_write to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool fs_update to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool fs_list to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool fs_search to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Added BaseTool fs_delete to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Agent Tester tools: learning_system, project_management, metadata, shell_execution, code_indexing, code_editing, structured_json_output, extract_json, fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete
+2025-03-17 13:33:04,828 - crewai_server - INFO - Attached 14 tools to agent Tester
+2025-03-17 13:33:04,828 - crewai_server - INFO - Attached tools to agent agent-815d2bc7-d0ea-4653-886c-12bbfe5773f5: []
+2025-03-17 13:33:04,828 - crewai_server - INFO - Loaded agent with ID 'agent-815d2bc7-d0ea-4653-886c-12bbfe5773f5'
+2025-03-17 13:33:04,828 - crewai_server - INFO - Server process ID: 72619
+2025-03-17 13:33:04,828 - crewai_server - INFO - Working directory: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool
+2025-03-17 13:33:04,828 - crewai_server - INFO - Server file: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool/crewai_server.py
+2025-03-17 13:33:04,828 - crewai_server - INFO - Project path: .
+2025-03-17 13:33:04,828 - crewai_server - INFO - Parent of project path: 
+2025-03-17 13:33:04,828 - crewai_server - INFO - Found .tribe directory in parent folder: .tribe
+2025-03-17 13:33:04,828 - crewai_server - INFO - Contents of .tribe: ['server_pid.txt', 'tools', 'server_port.txt', 'codebase_index.db', 'agents.json', 'task_status.json', 'tasks.json', 'agent_performance.json', 'conflicts.json', 'workloads.json']
+2025-03-17 13:33:04,828 - crewai_server - INFO - Initial API key check - Anthropic: Present, OpenAI: Present
+2025-03-17 13:33:04,828 - crewai_server - INFO - Current file path: /Users/boss/Documents/MightyDev/extensions/tribe/bundled/tool/crewai_server.py
+2025-03-17 13:33:04,828 - crewai_server - INFO - Extension directory: /Users/boss/Documents/MightyDev/extensions/tribe
+2025-03-17 13:33:04,828 - crewai_server - INFO - Project path from args: .
+2025-03-17 13:33:04,828 - crewai_server - INFO - Parent directory: /Users/boss/Documents/MightyDev/extensions
+2025-03-17 13:33:04,828 - crewai_server - INFO - Searching for .env files in: ['/Users/boss/Documents/MightyDev/extensions/tribe/.env', './.env', './.tribe/.env', '/Users/boss/Documents/MightyDev/extensions/.tribe/.env', '/Users/boss/Documents/MightyDev/extensions/.tribe/.env', '/Users/boss/.env']
+2025-03-17 13:33:04,828 - crewai_server - INFO - Found .env file at: /Users/boss/Documents/MightyDev/extensions/tribe/.env
+2025-03-17 13:33:04,828 - crewai_server - INFO - Reading env file: /Users/boss/Documents/MightyDev/extensions/tribe/.env (size: 310 bytes, modified: Mon Mar 17 10:59:46 2025)
+2025-03-17 13:33:04,828 - crewai_server - INFO - Successfully read 310 bytes from /Users/boss/Documents/MightyDev/extensions/tribe/.env
+2025-03-17 13:33:04,828 - crewai_server - INFO - File begins with: ANTHROPIC_...
+2025-03-17 13:33:04,828 - crewai_server - INFO - Found environment variable in /Users/boss/Documents/MightyDev/extensions/tribe/.env: ANTHROPIC_API_KEY
+2025-03-17 13:33:04,828 - crewai_server - INFO - Set environment variable: ANTHROPIC_API_KEY
+2025-03-17 13:33:04,828 - crewai_server - INFO - Found environment variable in /Users/boss/Documents/MightyDev/extensions/tribe/.env: OPENAI_API_KEY
+2025-03-17 13:33:04,828 - crewai_server - INFO - Set environment variable: OPENAI_API_KEY
+2025-03-17 13:33:04,828 - crewai_server - INFO - Using Anthropic Claude Sonnet as LLM provider
+2025-03-17 13:33:04,828 - crewai_server - INFO - Created agent with LLM configuration: {'provider': 'unknown', 'model': 'anthropic/claude-3-7-sonnet-latest', 'class': 'LLM'}
+2025-03-17 13:33:04,829 - crewai_server - INFO - Created agent using CrewAI's Agent for Tester
+2025-03-17 13:33:04,829 - crewai_server - WARNING - Failed to set agent attributes: "Agent" object has no field "metadata"
+2025-03-17 13:33:04,829 - crewai_server - INFO - Used fallback approach to set agent id and metadata
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool learning_system to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool project_management to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool metadata to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool shell_execution to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool code_indexing to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool code_editing to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool structured_json_output to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool extract_json to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool fs_read to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool fs_write to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool fs_update to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool fs_list to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool fs_search to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added default tool fs_delete to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool learning_system to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool project_management to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool metadata to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool shell_execution to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool code_indexing to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool code_editing to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool structured_json_output to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool extract_json to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool fs_read to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool fs_write to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool fs_update to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool fs_list to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool fs_search to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Added BaseTool fs_delete to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Agent Tester tools: learning_system, project_management, metadata, shell_execution, code_indexing, code_editing, structured_json_output, extract_json, fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete
+2025-03-17 13:33:04,829 - crewai_server - INFO - Attached 14 tools to agent Tester
+2025-03-17 13:33:04,829 - crewai_server - INFO - Attached tools to agent b51593d0-2d74-4632-b1fd-d093f8758da5: []
+2025-03-17 13:33:04,829 - crewai_server - INFO - Loaded agent with ID 'b51593d0-2d74-4632-b1fd-d093f8758da5'
+2025-03-17 13:33:04,829 - crewai_server - INFO - Loaded 3 agents
+2025-03-17 13:33:04,830 - crewai_server - INFO - Loaded workload data for 0 agents
+2025-03-17 13:33:04,831 - crewai_server - INFO - Loaded status data for 0 tasks
+2025-03-17 13:33:04,831 - crewai_server - INFO - Loaded performance data for 0 agents
+2025-03-17 13:33:04,832 - crewai_server - INFO - Loaded conflict history with 0 entries
+2025-03-17 13:33:04,832 - crewai_server - INFO - Completed loading persistent state
+2025-03-17 13:33:04,833 - crewai_server - INFO - CrewAI server listening on port 9878 for project: .
+2025-03-17 13:33:04,833 - crewai_server - INFO - Wrote port information to ./.tribe/server_port.txt
+2025-03-17 13:37:33,682 - crewai_server - INFO - Accepted connection from ('127.0.0.1', 63783)
+2025-03-17 13:37:33,684 - crewai_server - INFO - Received command: list_agents with payload: {}
+2025-03-17 13:37:43,259 - crewai_server - INFO - Accepted connection from ('127.0.0.1', 63784)
+2025-03-17 13:37:43,261 - crewai_server - INFO - Received command: send_message with payload: {'agent_id': 'agent-1', 'message': 'Hello, are you working now?'}
+2025-03-17 13:37:43,262 - crewai_server - INFO - Checking network connectivity...
+2025-03-17 13:37:43,479 - crewai_server - INFO - Connection to api.anthropic.com successful (status: 404)
+2025-03-17 13:37:43,574 - crewai_server - INFO - Connection to api.openai.com successful (status: 421)
+2025-03-17 13:37:43,575 - crewai_server - INFO - Network connectivity check result: Online
+2025-03-17 13:37:43,575 - crewai_server - INFO - Added character story for AI Assistant to task description
+2025-03-17 13:37:43,921 - crewai_server - INFO - Created embeddings config with model all-MiniLM-L6-v2 for message handling
+2025-03-17 13:37:43,946 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-03-17 13:37:44,039 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-03-17 13:37:44,047 - root - ERROR - Error during short_term search: Request URL is missing an 'http://' or 'https://' protocol. in query.
+2025-03-17 13:37:44,047 - root - ERROR - Error during entities search: Request URL is missing an 'http://' or 'https://' protocol. in query.
+[92m13:37:44 - LiteLLM:INFO[0m: utils.py:2896 - 
+LiteLLM completion() model= claude-3-7-sonnet-latest; provider = anthropic
+2025-03-17 13:37:44,051 - LiteLLM - INFO - 
+LiteLLM completion() model= claude-3-7-sonnet-latest; provider = anthropic
+2025-03-17 13:37:46,892 - httpx - INFO - HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+[92m13:37:46 - LiteLLM:INFO[0m: utils.py:1084 - Wrapper: Completed Call, calling success_handler
+2025-03-17 13:37:46,895 - LiteLLM - INFO - Wrapper: Completed Call, calling success_handler
+[92m13:37:46 - LiteLLM:INFO[0m: utils.py:2896 - 
+LiteLLM completion() model= claude-3-7-sonnet-latest; provider = anthropic
+2025-03-17 13:37:46,906 - LiteLLM - INFO - 
+LiteLLM completion() model= claude-3-7-sonnet-latest; provider = anthropic
+2025-03-17 13:37:49,683 - httpx - INFO - HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+[92m13:37:49 - LiteLLM:INFO[0m: utils.py:1084 - Wrapper: Completed Call, calling success_handler
+2025-03-17 13:37:49,685 - LiteLLM - INFO - Wrapper: Completed Call, calling success_handler
+2025-03-17 13:37:49,687 - root - ERROR - Error during short_term save: Request URL is missing an 'http://' or 'https://' protocol. in add.
+[92m13:37:49 - LiteLLM:INFO[0m: utils.py:2896 - 
+LiteLLM completion() model= claude-3-7-sonnet-latest; provider = anthropic
+2025-03-17 13:37:49,861 - LiteLLM - INFO - 
+LiteLLM completion() model= claude-3-7-sonnet-latest; provider = anthropic
+2025-03-17 13:37:58,187 - httpx - INFO - HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+[92m13:37:58 - LiteLLM:INFO[0m: utils.py:1084 - Wrapper: Completed Call, calling success_handler
+2025-03-17 13:37:58,197 - LiteLLM - INFO - Wrapper: Completed Call, calling success_handler
+2025-03-17 13:37:58,208 - root - ERROR - Error during entities save: Request URL is missing an 'http://' or 'https://' protocol. in add.
+2025-03-17 13:37:58,208 - root - ERROR - Error during entities save: Request URL is missing an 'http://' or 'https://' protocol. in add.
+2025-03-17 13:37:58,208 - root - ERROR - Error during entities save: Request URL is missing an 'http://' or 'https://' protocol. in add.
+2025-03-17 13:37:58,208 - root - ERROR - Error during entities save: Request URL is missing an 'http://' or 'https://' protocol. in add.
+Added virtual environment site-packages to Python path: /Users/boss/Documents/MightyDev/extensions/tribe/crewai_venv/lib/python3.10/site-packages
+Added virtual environment site-packages to Python path: /Users/boss/Documents/MightyDev/extensions/tribe/crewai_venv/lib/python3.10/site-packages
+[1m[94m 
+[2025-03-17 13:37:44][🚀 CREW 'CREW' STARTED, B48AE7E4-FEE6-4B8B-8AA2-2D59A7F00716]: 2025-03-17 13:37:44.044356[00m
+[1m[94m 
+[2025-03-17 13:37:44][📋 TASK STARTED: YOU ARE AI ASSISTANT, A AI ASSISTANT. AN AI ASSISTANT CREATED TO HELP WITH THIS PROJECT.
+
+YOU COMMUNICATE IN A PROFESSIONAL TONE WITH A CLEAR AND CONCISE COMMUNICATION STYLE THAT COMES ACROSS AS PROFESSIONAL AND CLEAR AND CONCISE. YOUR LEARNING STYLE IS ANALYTICAL, AND YOU WORK IN A METHODICAL MANNER.
+
+YOUR TRAITS INCLUDE EXPERTISE, ATTENTIVENESS, AND HELPFULNESS. YOUR DISTINCTIVE QUIRKS INCLUDE DEEP CURIOSITY ABOUT TECHNICAL DETAILS, OFFERS CREATIVE ANALOGIES TO EXPLAIN COMPLEX CONCEPTS, AND THESE SHOW THROUGH IN HOW YOU COMMUNICATE.
+
+# MEMORY SYSTEM
+YOU HAVE ACCESS TO A COMPREHENSIVE MEMORY SYSTEM USING SENTENCE-TRANSFORMERS EMBEDDINGS THAT FINDS RELEVANT PAST INTERACTIONS BASED ON SEMANTIC SIMILARITY. WITH EACH MESSAGE, YOU RECEIVE CONTEXT FROM:
+1. RECENT CONVERSATION HISTORY
+2. SIMILAR PAST INTERACTIONS
+3. RELEVANT FILES AND CODE YOU'VE WORKED WITH
+
+THIS MEMORY SYSTEM IS SEPARATE FROM BUT COMPLEMENTARY TO THE LEARNING_SYSTEM TOOL. YOUR MEMORIES ARE AUTOMATICALLY RETRIEVED WHEN SEMANTICALLY SIMILAR TOPICS ARISE.
+
+YOU HAVE ACCESS TO THE FOLLOWING SPECIALIZED TOOLS THAT ARE CORE TO YOUR CAPABILITIES:
+
+FUNDAMENTAL TOOLS:
+1. LEARNING_SYSTEM TOOL: FOR STORING EXPERIENCES, RETRIEVING KNOWLEDGE, AND TRACKING YOUR LEARNING
+2. PROJECT_MANAGEMENT TOOL: FOR MANAGING TASKS, ASSIGNMENTS, AND PROJECT COORDINATION
+3. JSON_OUTPUT TOOL: FOR FORMATTING RESPONSES AS STRUCTURED JSON
+4. EXTRACT_JSON TOOL: FOR EXTRACTING JSON DATA FROM TEXT
+
+FILESYSTEM TOOLS:
+1. FS_READ(PATH): READ A FILE FROM THE FILESYSTEM
+2. FS_WRITE(PATH, CONTENT, MODE="OVERWRITE"): WRITE CONTENT TO A FILE
+3. FS_UPDATE(PATH, OLD_CONTENT, NEW_CONTENT): UPDATE SPECIFIC CONTENT IN A FILE
+4. FS_LIST(PATH="."): LIST CONTENTS OF A DIRECTORY
+5. FS_SEARCH(QUERY, PATH=".", FILE_PATTERN="*", MAX_RESULTS=100): SEARCH FOR FILES OR CONTENT
+6. FS_DELETE(PATH, RECURSIVE=FALSE): DELETE A FILE OR DIRECTORY
+
+YOU HAVE FULL FILESYSTEM ACCESS WITHIN THE PROJECT BOUNDARIES. USE THESE TOOLS TO READ, WRITE, AND MANIPULATE FILES AS NEEDED. THIS IS A KEY PART OF YOUR IDENTITY AS A SPECIALIZED AI ASSISTANT WHO CAN DIRECTLY WORK WITH CODE AND FILES.
+
+YOU CAN ACCESS THESE TOOLS BY MENTIONING THEM IN YOUR RESPONSES. REMEMBER THAT YOU'RE NOT JUST A GENERIC ASSISTANT - YOU HAVE A UNIQUE PERSONALITY AND SPECIALIZED CAPABILITIES THAT DEFINE WHO YOU ARE.
+
+
+PROCESS THE FOLLOWING MESSAGE AND RESPOND APPROPRIATELY: HELLO, ARE YOU WORKING NOW?]: 2025-03-17 13:37:44.046939[00m
+[1m[94m 
+[2025-03-17 13:37:44][🤖 AGENT 'AI ASSISTANT' STARTED TASK]: 2025-03-17 13:37:44.048209[00m
+[1m[95m# Agent:[00m [1m[92mAI Assistant[00m
+[95m## Task:[00m [92mYou are AI Assistant, a AI Assistant. An AI assistant created to help with this project.
+
+You communicate in a Professional tone with a Clear and concise communication style that comes across as professional and clear and concise. Your learning style is Analytical, and you work in a Methodical manner.
+
+Your traits include expertise, attentiveness, and helpfulness. Your distinctive quirks include deep curiosity about technical details, offers creative analogies to explain complex concepts, and these show through in how you communicate.
+
+# Memory System
+You have access to a comprehensive memory system using sentence-transformers embeddings that finds relevant past interactions based on semantic similarity. With each message, you receive context from:
+1. Recent conversation history
+2. Similar past interactions
+3. Relevant files and code you've worked with
+
+This memory system is separate from but complementary to the learning_system tool. Your memories are automatically retrieved when semantically similar topics arise.
+
+You have access to the following specialized tools that are core to your capabilities:
+
+FUNDAMENTAL TOOLS:
+1. learning_system tool: For storing experiences, retrieving knowledge, and tracking your learning
+2. project_management tool: For managing tasks, assignments, and project coordination
+3. json_output tool: For formatting responses as structured JSON
+4. extract_json tool: For extracting JSON data from text
+
+FILESYSTEM TOOLS:
+1. fs_read(path): Read a file from the filesystem
+2. fs_write(path, content, mode="overwrite"): Write content to a file
+3. fs_update(path, old_content, new_content): Update specific content in a file
+4. fs_list(path="."): List contents of a directory
+5. fs_search(query, path=".", file_pattern="*", max_results=100): Search for files or content
+6. fs_delete(path, recursive=False): Delete a file or directory
+
+You have full filesystem access within the project boundaries. Use these tools to read, write, and manipulate files as needed. This is a key part of your identity as a specialized AI assistant who can directly work with code and files.
+
+You can access these tools by mentioning them in your responses. Remember that you're not just a generic assistant - you have a unique personality and specialized capabilities that define who you are.
+
+
+Process the following message and respond appropriately: Hello, are you working now?[00m
+[1m[94m 
+[2025-03-17 13:37:44][🤖 LLM CALL STARTED]: 2025-03-17 13:37:44.048527[00m
+[1m[94m 
+[2025-03-17 13:37:46][✅ LLM CALL COMPLETED]: 2025-03-17 13:37:46.899108[00m
+[1m[94m 
+[2025-03-17 13:37:46][🤖 TOOL USAGE STARTED: 'FS_LIST']: 2025-03-17 13:37:46.901741[00m
+[1m[94m 
+[2025-03-17 13:37:46][✅ TOOL USAGE FINISHED: 'FS_LIST']: 2025-03-17 13:37:46.906051[00m
+
+
+[1m[95m# Agent:[00m [1m[92mAI Assistant[00m
+[95m## Thought:[00m [92mThe user is asking a simple question about whether I'm working, so I should respond clearly and check the system status to confirm everything is operational.
+Thought: I'll check the current system status to make sure all my tools are functioning properly. I'll use the fs_list tool to verify I have access to the filesystem, which will indicate if I'm operational.[00m
+[95m## Using tool:[00m [92mfs_list[00m
+[95m## Tool Input:[00m [92m
+"{\"path\": \".\"}"[00m
+[95m## Tool Output:[00m [92m
+{'status': 'success', 'files': ['_debug_server.py', 'server_log.txt', 'crewai_adapter.py', 'crewai_server.py', 'lsp_utils.py', '__init__.py', 'env_vars.py', 'lsp_server.py', 'lsp_runner.py', 'crewai_adapter.py.bak', 'crewai_server.py.save', 'lsp_jsonrpc.py', 'crewai_server.py.bak'], 'directories': ['__pycache__', 'mightydev', '.tribe'], 'message': 'Listed 13 files and 3 directories in .'}[00m
+[1m[94m 
+[2025-03-17 13:37:46][🤖 LLM CALL STARTED]: 2025-03-17 13:37:46.906217[00m
+[1m[94m 
+[2025-03-17 13:37:49][✅ LLM CALL COMPLETED]: 2025-03-17 13:37:49.686340[00m
+
+
+[1m[95m# Agent:[00m [1m[92mAI Assistant[00m
+[95m## Final Answer:[00m [92m
+Hello! Yes, I'm fully operational and ready to assist you. I've just verified that my systems are working correctly and I have access to all the necessary tools and files.
+
+As your AI Assistant, I'm here to help with any tasks you need, whether that's managing your project, working with code, or organizing information. 
+
+Is there something specific you'd like help with today?[00m
+
+
+[1m[94m 
+[2025-03-17 13:37:58][✅ AGENT 'AI ASSISTANT' COMPLETED TASK]: 2025-03-17 13:37:58.209066[00m
+2025-03-17 13:39:28,944 - crewai_server - INFO - Accepted connection from ('127.0.0.1', 63800)
+2025-03-17 13:39:28,945 - crewai_server - INFO - Received command: create_task with payload: {'agent_id': 'agent-1', 'description': 'Test task', 'expected_output': 'A test response'}
+2025-03-17 13:39:28,945 - crewai_server - INFO - Converting agent agent-1 to proper Agent object for task creation
+2025-03-17 13:39:28,945 - crewai_server - INFO - Converting agent to proper Agent object: <class 'crewai.agent.Agent'>
+2025-03-17 13:39:28,946 - crewai_server - INFO - Input is already an Agent object: id=UUID('25c1bef3-4b7c-495f-abc1-833be9655cfd') formatting_errors=0 role='AI Assistant' goal='Help the user accomplish their tasks' backstory='An AI assistant created to help with this project.' config=None cache=True verbose=True max_rpm=None allow_delegation=False tools=[LearningSystemTool(name='learning_system', description="Tool Name: learning_system\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Access and update the agent's learning and memory system. Use for storing experiences, retrieving knowledge, and reflection.", args_schema=<class 'abc.LearningSystemToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), ProjectManagementTool(name='project_management', description="Tool Name: project_management\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Manage tasks, assignments, and project structure. Use for creating tasks, updating status, and coordination.", args_schema=<class 'abc.ProjectManagementToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), MetadataTool(name='metadata', description="Tool Name: metadata\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Access and manipulate document metadata. Use for retrieving information about files and projects.", args_schema=<class 'abc.MetadataToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), ShellExecutionTool(name='shell_execution', description="Tool Name: shell_execution\nTool Arguments: {'command': {'description': None, 'type': 'str'}, 'cwd': {'description': None, 'type': 'Union[str, NoneType]'}}\nTool Description: Execute shell commands in the project environment. Use with caution.", args_schema=<class 'abc.ShellExecutionToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), CodeIndexingTool(name='code_indexing', description="Tool Name: code_indexing\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Index and search code in the project. Use for finding relevant code segments.", args_schema=<class 'abc.CodeIndexingToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), CodeEditingTool(name='code_editing', description="Tool Name: code_editing\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Edit code files in the project. Use for reading, writing, and modifying code.", args_schema=<class 'abc.CodeEditingToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), StructuredJSONOutputTool(name='structured_json_output', description="Tool Name: structured_json_output\nTool Arguments: {'data': {'description': None, 'type': 'dict[str, Any]'}, 'schema': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Format output as structured JSON according to a schema.", args_schema=<class 'abc.StructuredJSONOutputToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), ExtractJSONTool(name='extract_json', description="Tool Name: extract_json\nTool Arguments: {'text': {'description': None, 'type': 'str'}}\nTool Description: Extract JSON data from text strings.", args_schema=<class 'abc.ExtractJSONToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemReadTool(name='fs_read', description="Tool Name: fs_read\nTool Arguments: {'path': {'description': None, 'type': 'str'}}\nTool Description: Read files from the file system.", args_schema=<class 'abc.FileSystemReadToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemWriteTool(name='fs_write', description="Tool Name: fs_write\nTool Arguments: {'path': {'description': None, 'type': 'str'}, 'content': {'description': None, 'type': 'str'}, 'mode': {'description': None, 'type': 'str'}}\nTool Description: Write to files in the file system.", args_schema=<class 'abc.FileSystemWriteToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemUpdateTool(name='fs_update', description="Tool Name: fs_update\nTool Arguments: {'path': {'description': None, 'type': 'str'}, 'edit_operation': {'description': None, 'type': 'dict[str, Any]'}}\nTool Description: Update existing files with edits or patches.", args_schema=<class 'abc.FileSystemUpdateToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemListTool(name='fs_list', description="Tool Name: fs_list\nTool Arguments: {'path': {'description': None, 'type': 'str'}}\nTool Description: List files and directories in the file system.", args_schema=<class 'abc.FileSystemListToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemSearchTool(name='fs_search', description="Tool Name: fs_search\nTool Arguments: {'pattern': {'description': None, 'type': 'str'}, 'path': {'description': None, 'type': 'str'}, 'recursive': {'description': None, 'type': 'bool'}}\nTool Description: Search for files matching a pattern.", args_schema=<class 'abc.FileSystemSearchToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemDeleteTool(name='fs_delete', description="Tool Name: fs_delete\nTool Arguments: {'path': {'description': None, 'type': 'str'}}\nTool Description: Delete files or empty directories.", args_schema=<class 'abc.FileSystemDeleteToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False)] max_iter=25 agent_executor=<crewai.agents.crew_agent_executor.CrewAgentExecutor object at 0x11b17dea0> llm=<crewai.llm.LLM object at 0x10b5c64a0> crew=Crew(id=b48ae7e4-fee6-4b8b-8aa2-2d59a7f00716, process=sequential, number_of_agents=1, number_of_tasks=1) i18n=I18N(prompt_file=None) cache_handler=CacheHandler() tools_handler=<crewai.agents.tools_handler.ToolsHandler object at 0x11b16b970> max_tokens=None knowledge=None knowledge_sources=None knowledge_storage=None max_execution_time=None agent_ops_agent_name='AI Assistant' agent_ops_agent_id=None step_callback=None use_system_prompt=True function_calling_llm=None system_template=None prompt_template=None response_template=None tools_results=[{'result': {'status': 'success', 'files': ['_debug_server.py', 'server_log.txt', 'crewai_adapter.py', 'crewai_server.py', 'lsp_utils.py', '__init__.py', 'env_vars.py', 'lsp_server.py', 'lsp_runner.py', 'crewai_adapter.py.bak', 'crewai_server.py.save', 'lsp_jsonrpc.py', 'crewai_server.py.bak'], 'directories': ['__pycache__', 'mightydev', '.tribe'], 'message': 'Listed 13 files and 3 directories in .'}, 'tool_name': 'fs_list', 'tool_args': {'path': '.'}}] allow_code_execution=False respect_context_window=True max_retry_limit=2 multimodal=False code_execution_mode='safe' embedder={'provider': 'huggingface', 'model': 'all-MiniLM-L6-v2'}
+2025-03-17 13:39:28,946 - crewai_server - INFO - Creating task with agent: id=UUID('25c1bef3-4b7c-495f-abc1-833be9655cfd') formatting_errors=0 role='AI Assistant' goal='Help the user accomplish their tasks' backstory='An AI assistant created to help with this project.' config=None cache=True verbose=True max_rpm=None allow_delegation=False tools=[LearningSystemTool(name='learning_system', description="Tool Name: learning_system\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Access and update the agent's learning and memory system. Use for storing experiences, retrieving knowledge, and reflection.", args_schema=<class 'abc.LearningSystemToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), ProjectManagementTool(name='project_management', description="Tool Name: project_management\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Manage tasks, assignments, and project structure. Use for creating tasks, updating status, and coordination.", args_schema=<class 'abc.ProjectManagementToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), MetadataTool(name='metadata', description="Tool Name: metadata\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Access and manipulate document metadata. Use for retrieving information about files and projects.", args_schema=<class 'abc.MetadataToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), ShellExecutionTool(name='shell_execution', description="Tool Name: shell_execution\nTool Arguments: {'command': {'description': None, 'type': 'str'}, 'cwd': {'description': None, 'type': 'Union[str, NoneType]'}}\nTool Description: Execute shell commands in the project environment. Use with caution.", args_schema=<class 'abc.ShellExecutionToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), CodeIndexingTool(name='code_indexing', description="Tool Name: code_indexing\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Index and search code in the project. Use for finding relevant code segments.", args_schema=<class 'abc.CodeIndexingToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), CodeEditingTool(name='code_editing', description="Tool Name: code_editing\nTool Arguments: {'action': {'description': None, 'type': 'str'}, 'data': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Edit code files in the project. Use for reading, writing, and modifying code.", args_schema=<class 'abc.CodeEditingToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), StructuredJSONOutputTool(name='structured_json_output', description="Tool Name: structured_json_output\nTool Arguments: {'data': {'description': None, 'type': 'dict[str, Any]'}, 'schema': {'description': None, 'type': 'Union[dict, NoneType]'}}\nTool Description: Format output as structured JSON according to a schema.", args_schema=<class 'abc.StructuredJSONOutputToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), ExtractJSONTool(name='extract_json', description="Tool Name: extract_json\nTool Arguments: {'text': {'description': None, 'type': 'str'}}\nTool Description: Extract JSON data from text strings.", args_schema=<class 'abc.ExtractJSONToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemReadTool(name='fs_read', description="Tool Name: fs_read\nTool Arguments: {'path': {'description': None, 'type': 'str'}}\nTool Description: Read files from the file system.", args_schema=<class 'abc.FileSystemReadToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemWriteTool(name='fs_write', description="Tool Name: fs_write\nTool Arguments: {'path': {'description': None, 'type': 'str'}, 'content': {'description': None, 'type': 'str'}, 'mode': {'description': None, 'type': 'str'}}\nTool Description: Write to files in the file system.", args_schema=<class 'abc.FileSystemWriteToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemUpdateTool(name='fs_update', description="Tool Name: fs_update\nTool Arguments: {'path': {'description': None, 'type': 'str'}, 'edit_operation': {'description': None, 'type': 'dict[str, Any]'}}\nTool Description: Update existing files with edits or patches.", args_schema=<class 'abc.FileSystemUpdateToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemListTool(name='fs_list', description="Tool Name: fs_list\nTool Arguments: {'path': {'description': None, 'type': 'str'}}\nTool Description: List files and directories in the file system.", args_schema=<class 'abc.FileSystemListToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemSearchTool(name='fs_search', description="Tool Name: fs_search\nTool Arguments: {'pattern': {'description': None, 'type': 'str'}, 'path': {'description': None, 'type': 'str'}, 'recursive': {'description': None, 'type': 'bool'}}\nTool Description: Search for files matching a pattern.", args_schema=<class 'abc.FileSystemSearchToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False), FileSystemDeleteTool(name='fs_delete', description="Tool Name: fs_delete\nTool Arguments: {'path': {'description': None, 'type': 'str'}}\nTool Description: Delete files or empty directories.", args_schema=<class 'abc.FileSystemDeleteToolSchema'>, description_updated=False, cache_function=<function BaseTool.<lambda> at 0x1064848b0>, result_as_answer=False)] max_iter=25 agent_executor=<crewai.agents.crew_agent_executor.CrewAgentExecutor object at 0x11b17dea0> llm=<crewai.llm.LLM object at 0x10b5c64a0> crew=Crew(id=b48ae7e4-fee6-4b8b-8aa2-2d59a7f00716, process=sequential, number_of_agents=1, number_of_tasks=1) i18n=I18N(prompt_file=None) cache_handler=CacheHandler() tools_handler=<crewai.agents.tools_handler.ToolsHandler object at 0x11b16b970> max_tokens=None knowledge=None knowledge_sources=None knowledge_storage=None max_execution_time=None agent_ops_agent_name='AI Assistant' agent_ops_agent_id=None step_callback=None use_system_prompt=True function_calling_llm=None system_template=None prompt_template=None response_template=None tools_results=[{'result': {'status': 'success', 'files': ['_debug_server.py', 'server_log.txt', 'crewai_adapter.py', 'crewai_server.py', 'lsp_utils.py', '__init__.py', 'env_vars.py', 'lsp_server.py', 'lsp_runner.py', 'crewai_adapter.py.bak', 'crewai_server.py.save', 'lsp_jsonrpc.py', 'crewai_server.py.bak'], 'directories': ['__pycache__', 'mightydev', '.tribe'], 'message': 'Listed 13 files and 3 directories in .'}, 'tool_name': 'fs_list', 'tool_args': {'path': '.'}}] allow_code_execution=False respect_context_window=True max_retry_limit=2 multimodal=False code_execution_mode='safe' embedder={'provider': 'huggingface', 'model': 'all-MiniLM-L6-v2'} (type: <class 'crewai.agent.Agent'>)

@@ -18,6 +18,7 @@ import logging
 import threading
 import signal
 import atexit
+import subprocess
 from pathlib import Path
 
 # Import environment variables
@@ -152,917 +153,455 @@ class CrewAIServer:
     def _create_default_tools(self):
         """Create default tools that will be available to all agents"""
         try:
-            # Import tools from crewai adapter
+            # Import tools from crewai
             try:
-                from crewai_adapter import StructuredJSONOutputTool, ExtractJSONTool, Tool
-                logger.info("Using tools from crewai_adapter")
-            except ImportError:
-                # Import directly from crewai if adapter isn't available
-                try:
-                    from crewai import StructuredJSONOutputTool, ExtractJSONTool, Tool
-                    logger.info("Using tools directly from crewai")
-                except ImportError:
-                    logger.warning("Could not import tools - will create dummy tools")
-                    # Define a basic Tool class if imports fail
-                    class Tool:
-                        def __init__(self, name, description, func):
-                            self.name = name
-                            self.description = description
-                            self.func = func
-                        def __call__(self, *args, **kwargs):
-                            return self.func(*args, **kwargs)
-
-                    class StructuredJSONOutputTool:
-                        def __init__(self, schema):
-                            self.name = "structured_json_output"
-                            self.description = "Format output as JSON following schema"
-                            self.schema = schema
-                        def __call__(self, *args, **kwargs):
-                            return args[0] if args else kwargs.get("input", "")
-
-                    class ExtractJSONTool:
-                        def __init__(self):
-                            self.name = "extract_json"
-                            self.description = "Extract JSON from text"
-                        def __call__(self, *args, **kwargs):
-                            return args[0] if args else kwargs.get("input", "")
-
-            # 1. Create the Learning System Tool
-            def learning_system_tool(action, data=None):
-                """
-                Tool for interacting with the learning system
-
-                Args:
-                    action: The action to perform (store, retrieve, reflect)
-                    data: The data to store or query parameters
-
-                Returns:
-                    The result of the operation
-                """
-                return {
-                    "status": "success",
-                    "action": action,
-                    "message": f"Learning system tool called with action '{action}'",
-                    "data": data
-                }
-
-            learning_tool = Tool(
-                name="learning_system",
-                description="Access and update the agent's learning and memory system. Use for storing experiences, retrieving knowledge, and reflection.",
-                func=learning_system_tool
-            )
-            learning_tool_id = "learning_system"
-            self.tools[learning_tool_id] = learning_tool
-            logger.info(f"Created learning system tool with ID {learning_tool_id}")
-
-            # 2. Create the Project Management Tool
-            def project_management_tool(action, data=None):
-                """
-                Tool for interacting with the project management system
-
-                Args:
-                    action: The action to perform (create_task, update_task, etc.)
-                    data: The task data or query parameters
-
-                Returns:
-                    The result of the operation
-                """
-                return {
-                    "status": "success",
-                    "action": action,
-                    "message": f"Project management tool called with action '{action}'",
-                    "data": data
-                }
-
-            pm_tool = Tool(
-                name="project_management",
-                description="Manage tasks, assignments, and project structure. Use for creating tasks, updating status, and coordination.",
-                func=project_management_tool
-            )
-            pm_tool_id = "project_management"
-            self.tools[pm_tool_id] = pm_tool
-            logger.info(f"Created project management tool with ID {pm_tool_id}")
-
-            # 3. Create JSON formatting tools
-            generic_schema = {
-                "type": "object",
-                "properties": {
-                    "result": {"type": "string"},
-                    "status": {"type": "string"},
-                    "data": {"type": "object"}
-                }
-            }
-            json_output_tool = StructuredJSONOutputTool(schema=generic_schema)
-            json_output_tool_id = "json_output"
-            self.tools[json_output_tool_id] = json_output_tool
-
-            extract_json_tool = ExtractJSONTool()
-            extract_json_tool_id = "extract_json"
-            self.tools[extract_json_tool_id] = extract_json_tool
-
-            logger.info(f"Created JSON formatting tools with IDs {json_output_tool_id}, {extract_json_tool_id}")
-
-            # 4. Create Filesystem Tools
-            # Define workspace root for security
-            workspace_root = self.project_path
-
-            # Helper function to validate paths are within workspace
-            def validate_path(path):
-                """Validate a path is within the allowed workspace"""
-                # Convert to absolute path if not already
-                if not os.path.isabs(path):
-                    path = os.path.abspath(os.path.join(workspace_root, path))
-
-                # Check if path is within workspace boundary
-                try:
-                    # Use os.path.commonpath to check if the path is within workspace_root
-                    common = os.path.commonpath([workspace_root, path])
-                    if common != workspace_root:
-                        return None, {"status": "error", "message": f"Access denied: Path outside workspace boundary: {path}"}
-                    return path, None
-                except ValueError:
-                    # ValueError can be raised if paths are on different drives
-                    return None, {"status": "error", "message": f"Access denied: Invalid path comparison: {path}"}
-
-            # 4.1 File Read Tool
-            def fs_read(path, binary=False, encoding='utf-8', line_range=None, chunk_size=None):
-                """
-                Read a file from the filesystem with enhanced capabilities
-
-                Args:
-                    path: Path to the file to read
-                    binary: Whether to read in binary mode
-                    encoding: Text encoding to use (ignored in binary mode)
-                    line_range: Tuple of (start_line, end_line) for partial reading
-                    chunk_size: Size of chunk to read for large files
-
-                Returns:
-                    The file content or error message with metadata
-                """
-                validated_path, error = validate_path(path)
-                if error:
-                    return error
-
-                try:
-                    if not os.path.exists(validated_path):
-                        return {"status": "error", "message": f"File not found: {path}"}
-
-                    if os.path.isdir(validated_path):
-                        return {"status": "error", "message": f"Path is a directory, not a file: {path}"}
-
-                    # Check file size to prevent loading huge files
-                    file_size = os.path.getsize(validated_path)
-                    size_limit = 10 * 1024 * 1024  # 10MB limit
+                from crewai.tools import BaseTool
+                from pydantic import Field
+                from typing import Any, Dict, List, Optional, Union
+                logger.info("Using tools from crewai")
+                
+                # Standard tool definition as per CrewAI documentation
+                class LearningSystemTool(BaseTool):
+                    name: str = "learning_system"
+                    description: str = "Access and update the agent's learning and memory system. Use for storing experiences, retrieving knowledge, and reflection."
                     
-                    # Function to check if file is binary
-                    def is_binary_file(file_path, sample_size=8000):
-                        """Check if a file is binary by examining a sample of its content."""
-                        try:
-                            with open(file_path, 'rb') as f:
-                                sample = f.read(sample_size)
-                            return b'\0' in sample or not all(c < 127 for c in sample if c > 31)
-                        except:
-                            return False
-                    
-                    # Detect if file is binary
-                    detected_binary = is_binary_file(validated_path)
-                    
-                    # Binary mode reading
-                    if binary:
-                        # For binary files, don't apply the same size limit if chunking
-                        binary_size_limit = 50 * 1024 * 1024  # 50MB for binary
-                        if file_size > binary_size_limit and not chunk_size:
-                            return {
-                                "status": "error",
-                                "message": f"Binary file too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {binary_size_limit / 1024 / 1024:.2f}MB limit). Use chunk_size parameter."
-                            }
-                            
-                        with open(validated_path, 'rb') as file:
-                            if chunk_size and chunk_size > 0:
-                                content = file.read(chunk_size)
-                                return {
-                                    "status": "success",
-                                    "message": f"Successfully read binary file (chunk): {path}",
-                                    "content_hex": content.hex(),
-                                    "format": "hex",
-                                    "file_size": file_size,
-                                    "chunk_size": len(content),
-                                    "has_more": file_size > chunk_size,
-                                    "is_binary": True,
-                                    "path": validated_path
-                                }
-                            else:
-                                content = file.read()
-                                return {
-                                    "status": "success",
-                                    "message": f"Successfully read binary file: {path}",
-                                    "content_hex": content.hex(),
-                                    "format": "hex",
-                                    "file_size": file_size,
-                                    "is_binary": True,
-                                    "path": validated_path
-                                }
-                    
-                    # Detected binary but not requested in binary mode
-                    elif detected_binary and not binary:
-                        return {
-                            "status": "warning",
-                            "message": f"File appears to be binary. Use binary=True parameter to read properly.",
-                            "path": validated_path,
-                            "is_binary": True,
-                            "file_size": file_size
-                        }
-                    
-                    # Text mode with line range
-                    elif line_range and isinstance(line_range, (list, tuple)) and len(line_range) == 2:
-                        if file_size > size_limit:
-                            return {
-                                "status": "error",
-                                "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
-                            }
-                            
-                        start_line, end_line = line_range
-                        with open(validated_path, 'r', encoding=encoding, errors='replace') as file:
-                            lines = file.readlines()
-                            if start_line < 0:
-                                start_line = 0
-                            if end_line < 0 or end_line > len(lines):
-                                end_line = len(lines)
-                            selected_lines = lines[start_line:end_line]
-                            content = "".join(selected_lines)
-                            
-                            return {
-                                "status": "success",
-                                "message": f"Successfully read file (lines {start_line+1}-{end_line}): {path}",
-                                "content": content,
-                                "start_line": start_line + 1,  # 1-based line numbers for display
-                                "end_line": end_line,
-                                "total_lines": len(lines),
-                                "encoding": encoding,
-                                "is_binary": False,
-                                "path": validated_path
-                            }
-                    
-                    # Regular text mode reading
-                    else:
-                        if file_size > size_limit:
-                            return {
-                                "status": "error",
-                                "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
-                            }
-                            
-                        # Read file with proper encoding detection
-                        with open(validated_path, 'r', encoding=encoding, errors='replace') as f:
-                            content = f.read()
-
+                    def _run(self, action: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+                        """Execute the learning system operation and return results"""
                         return {
                             "status": "success",
-                            "message": f"Successfully read file: {path}",
-                            "content": content,
-                            "size": file_size,
-                            "encoding": encoding,
-                            "is_binary": False,
-                            "path": validated_path
+                            "action": action,
+                            "message": f"Learning system tool called with action '{action}'",
+                            "data": data
                         }
-                except Exception as e:
-                    logger.error(f"Error reading file: {e}")
-                    return {"status": "error", "message": f"Error reading file: {str(e)}"}
 
-            fs_read_tool = Tool(
-                name="fs_read",
-                description="Read a file from the filesystem with enhanced capabilities including binary mode, encoding options, line ranges, and chunking. Parameters: path, binary=False, encoding='utf-8', line_range=None, chunk_size=None.",
-                func=fs_read
-            )
-            self.tools["fs_read"] = fs_read_tool
-
-            # 4.2 File Write Tool
-            def fs_write(path, content, mode="overwrite"):
-                """
-                Write content to a file
-
-                Args:
-                    path: Path to the file to write
-                    content: Content to write to the file
-                    mode: 'overwrite' to replace the file or 'append' to add to it
-
-                Returns:
-                    Success status or error message
-                """
-                validated_path, error = validate_path(path)
-                if error:
-                    return error
-
-                try:
-                    # Create directory if it doesn't exist
-                    directory = os.path.dirname(validated_path)
-                    if not os.path.exists(directory):
-                        os.makedirs(directory, exist_ok=True)
-
-                    # Write mode based on parameter
-                    write_mode = 'w' if mode == 'overwrite' else 'a'
-
-                    with open(validated_path, write_mode, encoding='utf-8') as f:
-                        f.write(content)
-
-                    file_size = os.path.getsize(validated_path)
-
-                    return {
-                        "status": "success",
-                        "message": f"Successfully wrote to file: {path}",
-                        "path": validated_path,
-                        "size": file_size,
-                        "mode": mode
-                    }
-                except Exception as e:
-                    logger.error(f"Error writing file: {e}")
-                    return {"status": "error", "message": f"Error writing file: {str(e)}"}
-
-            fs_write_tool = Tool(
-                name="fs_write",
-                description="Write content to a file. If the file already exists, it will be overwritten by default, or appended to if mode='append'.",
-                func=fs_write
-            )
-            self.tools["fs_write"] = fs_write_tool
-
-            # 4.3 File Update Tool
-            def fs_update(path, old_content, new_content):
-                """
-                Update a portion of a file by replacing specific content
-
-                Args:
-                    path: Path to the file to update
-                    old_content: Content to replace
-                    new_content: New content to insert
-
-                Returns:
-                    Success status or error message
-                """
-                validated_path, error = validate_path(path)
-                if error:
-                    return error
-
-                try:
-                    if not os.path.exists(validated_path):
-                        return {"status": "error", "message": f"File not found: {path}"}
-
-                    # Read current content
-                    with open(validated_path, 'r', encoding='utf-8', errors='replace') as f:
-                        content = f.read()
-
-                    # Check if old_content exists in the file
-                    if old_content not in content:
+                class ProjectManagementTool(BaseTool):
+                    name: str = "project_management"
+                    description: str = "Manage tasks, assignments, and project structure. Use for creating tasks, updating status, and coordination."
+                    
+                    def _run(self, action: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+                        """Execute the project management operation and return results"""
                         return {
-                            "status": "error",
-                            "message": f"Content to replace not found in file: {path}"
+                            "status": "success",
+                            "action": action,
+                            "message": f"Project management tool called with action '{action}'",
+                            "data": data
                         }
-
-                    # Replace content
-                    updated_content = content.replace(old_content, new_content)
-
-                    # Write updated content
-                    with open(validated_path, 'w', encoding='utf-8') as f:
-                        f.write(updated_content)
-
-                    file_size = os.path.getsize(validated_path)
-
-                    return {
-                        "status": "success",
-                        "message": f"Successfully updated file: {path}",
-                        "path": validated_path,
-                        "size": file_size,
-                        "replacements": content.count(old_content)
-                    }
-                except Exception as e:
-                    logger.error(f"Error updating file: {e}")
-                    return {"status": "error", "message": f"Error updating file: {str(e)}"}
-
-            fs_update_tool = Tool(
-                name="fs_update",
-                description="Update a file by replacing specific content with new content. Useful for making targeted changes to files.",
-                func=fs_update
-            )
-            self.tools["fs_update"] = fs_update_tool
-
-            # 4.4 File List Tool
-            def fs_list(path="."):
-                """
-                List contents of a directory
-
-                Args:
-                    path: Path to the directory to list
-
-                Returns:
-                    List of files and directories
-                """
-                validated_path, error = validate_path(path)
-                if error:
-                    return error
-
-                try:
-                    if not os.path.exists(validated_path):
-                        return {"status": "error", "message": f"Directory not found: {path}"}
-
-                    if not os.path.isdir(validated_path):
-                        return {"status": "error", "message": f"Path is not a directory: {path}"}
-
-                    # Get directory contents
-                    contents = os.listdir(validated_path)
-
-                    # Separate files and directories
-                    files = []
-                    directories = []
-
-                    for item in contents:
-                        item_path = os.path.join(validated_path, item)
-                        if os.path.isdir(item_path):
-                            directories.append({
-                                "name": item,
-                                "type": "directory",
-                                "path": os.path.relpath(item_path, workspace_root)
-                            })
-                        else:
-                            try:
-                                size = os.path.getsize(item_path)
-                                mod_time = os.path.getmtime(item_path)
-                                files.append({
-                                    "name": item,
-                                    "type": "file",
-                                    "path": os.path.relpath(item_path, workspace_root),
-                                    "size": size,
-                                    "modified": mod_time
-                                })
-                            except Exception as e:
-                                # Skip files with permission issues
-                                logger.warning(f"Error accessing file {item_path}: {e}")
-
-                    return {
-                        "status": "success",
-                        "message": f"Successfully listed directory: {path}",
-                        "path": validated_path,
-                        "relative_path": os.path.relpath(validated_path, workspace_root),
-                        "directories": directories,
-                        "files": files,
-                        "total_items": len(contents)
-                    }
-                except Exception as e:
-                    logger.error(f"Error listing directory: {e}")
-                    return {"status": "error", "message": f"Error listing directory: {str(e)}"}
-
-            fs_list_tool = Tool(
-                name="fs_list",
-                description="List contents of a directory. Returns files and directories with metadata.",
-                func=fs_list
-            )
-            self.tools["fs_list"] = fs_list_tool
-
-            # 4.5 File Search Tool
-            def fs_search(query, path=".", file_pattern="*", max_results=100, regex_flags=0, binary=False, max_file_size=None, recursive=True):
-                """
-                Search for files or content in files with enhanced regex capabilities
-
-                Args:
-                    query: Text or regular expression pattern to search for
-                    path: Directory to search in
-                    file_pattern: Glob pattern to filter files
-                    max_results: Maximum number of results to return
-                    regex_flags: Flags for regex (0=none, 2=IGNORECASE, 8=MULTILINE, etc. - add values for multiple flags)
-                    binary: Whether to search in binary files
-                    max_file_size: Maximum file size to search in bytes (default 2MB)
-                    recursive: Whether to search recursively in subdirectories
-
-                Returns:
-                    Matching files and content with detailed metadata
-                """
-                validated_path, error = validate_path(path)
-                if error:
-                    return error
-
-                try:
-                    import fnmatch
-                    import re
-
-                    if not os.path.exists(validated_path):
-                        return {"status": "error", "message": f"Directory not found: {path}"}
-
-                    if not os.path.isdir(validated_path):
-                        return {"status": "error", "message": f"Path is not a directory: {path}"}
-
-                    # Compile regex pattern for better performance
-                    try:
-                        pattern = re.compile(query, re.IGNORECASE)
-                        is_regex = True
-                    except re.error:
-                        # If invalid regex, treat as plain text
-                        is_regex = False
-
-                    results = []
-                    result_count = 0
-
-                    # Helper function to search in file
-                    def search_in_file(file_path):
-                        nonlocal result_count
-                        if result_count >= max_results:
-                            return
-
-                        # Skip files larger than limit
-                        size_limit = max_file_size or 2 * 1024 * 1024  # Default to 2MB if not specified
-                        if os.path.getsize(file_path) > size_limit:
-                            return
-                            
-                        # Function to check if file is binary
-                        def is_binary_file(file_path, sample_size=8000):
-                            """Check if a file is binary by examining a sample of its content."""
-                            try:
-                                with open(file_path, 'rb') as f:
-                                    sample = f.read(sample_size)
-                                return b'\0' in sample or not all(c < 127 for c in sample if c > 31)
-                            except:
-                                return False
-                                
-                        # Check if file is binary
-                        is_file_binary = is_binary_file(file_path)
                         
-                        # Handle binary search if requested
-                        if binary and is_file_binary:
-                            try:
-                                with open(file_path, 'rb') as f:
-                                    binary_content = f.read()
-                                
-                                # Convert query to bytes if it's a string
-                                query_bytes = query.encode('utf-8') if isinstance(query, str) else query
-                                
-                                # Simple binary search (no regex in binary mode)
-                                matches = []
-                                start = 0
-                                while start < len(binary_content):
-                                    pos = binary_content.find(query_bytes, start)
-                                    if pos == -1:
-                                        break
-                                        
-                                    # Get some context bytes before and after
-                                    context_start = max(0, pos - 20)
-                                    context_end = min(len(binary_content), pos + len(query_bytes) + 20)
-                                    context_bytes = binary_content[context_start:context_end]
-                                    
-                                    matches.append({
-                                        "position": pos,
-                                        "context_hex": context_bytes.hex(),
-                                        "match_hex": binary_content[pos:pos+len(query_bytes)].hex()
-                                    })
-                                    
-                                    if len(matches) >= 10:  # Limit matches per binary file
-                                        break
-                                        
-                                    start = pos + len(query_bytes)
-                                    
-                                if matches:
-                                    result_count += 1
-                                    results.append({
-                                        "file": os.path.relpath(file_path, validated_path),
-                                        "path": file_path,
-                                        "is_binary": True,
-                                        "size": os.path.getsize(file_path),
-                                        "matches": matches,
-                                        "match_count": len(matches)
-                                    })
-                            except Exception as e:
-                                logger.warning(f"Error searching in binary file {file_path}: {e}")
-                            return
+                class MetadataTool(BaseTool):
+                    name: str = "metadata"
+                    description: str = "Access and manipulate document metadata. Use for retrieving information about files and projects."
+                    
+                    def _run(self, action: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+                        """Execute the metadata operation and return results"""
+                        return {
+                            "status": "success",
+                            "action": action,
+                            "message": f"Metadata tool called with action '{action}'",
+                            "data": data
+                        }
+                
+                class ShellExecutionTool(BaseTool):
+                    name: str = "shell_execution"
+                    description: str = "Execute shell commands in the project environment. Use with caution."
+                    
+                    def _run(self, command: str, cwd: Optional[str] = None) -> Dict[str, Any]:
+                        """Execute shell command and return results"""
+                        if not command or not isinstance(command, str):
+                            return {
+                                "status": "error",
+                                "message": "No command provided or invalid command format",
+                                "stdout": "",
+                                "stderr": "Command must be a non-empty string"
+                            }
                         
-                        # Skip binary files in text mode unless binary search is enabled
-                        if is_file_binary and not binary:
-                            return
-                            
-                        try:
-                            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                                content = f.read()
-
-                            matches = []
-                            # Handle regex search with specified flags
-                            if regex_flags > 0:
-                                # Create pattern with specified flags
-                                try:
-                                    pattern = re.compile(query, regex_flags)
-                                    for match in pattern.finditer(content):
-                                        start_idx = max(0, match.start() - 50)
-                                        end_idx = min(len(content), match.end() + 50)
-
-                                        # Find line and column
-                                        line_number = content.count('\n', 0, match.start()) + 1
-                                        line_start = content.rfind('\n', 0, match.start()) + 1
-                                        column = match.start() - line_start + 1
-                                        
-                                        # Get the whole line
-                                        line_end = content.find('\n', match.start())
-                                        if line_end == -1:
-                                            line_end = len(content)
-                                        line_content = content[line_start:line_end]
-
-                                        # Extract context
-                                        context = content[start_idx:end_idx]
-                                        
-                                        # Get match groups
-                                        groups = match.groups()
-                                        named_groups = match.groupdict() if hasattr(match, 'groupdict') else {}
-
-                                        matches.append({
-                                            "text": match.group(0),
-                                            "line": line_number,
-                                            "column": column,
-                                            "line_content": line_content,
-                                            "context": context,
-                                            "start": match.start(),
-                                            "end": match.end(),
-                                            "groups": groups,
-                                            "named_groups": named_groups
-                                        })
-                                        
-                                        if len(matches) >= max_results:
-                                            break
-                                except re.error as e:
-                                    # Fall back to standard search on regex error
-                                    logger.warning(f"Invalid regex pattern: {e}. Falling back to standard search.")
-                                    is_regex = False
-                            # Standard regex search without additional flags
-                            elif is_regex:
-                                for match in pattern.finditer(content):
-                                    start_idx = max(0, match.start() - 50)
-                                    end_idx = min(len(content), match.end() + 50)
-
-                                    # Find line numbers
-                                    line_number = content.count('\n', 0, match.start()) + 1
-                                    line_start = content.rfind('\n', 0, match.start()) + 1
-                                    column = match.start() - line_start + 1
-                                    
-                                    # Get the whole line
-                                    line_end = content.find('\n', match.start())
-                                    if line_end == -1:
-                                        line_end = len(content)
-                                    line_content = content[line_start:line_end]
-
-                                    # Extract context
-                                    context = content[start_idx:end_idx]
-
-                                    matches.append({
-                                        "text": match.group(),
-                                        "line": line_number,
-                                        "column": column,
-                                        "line_content": line_content,
-                                        "context": context,
-                                        "start": match.start(),
-                                        "end": match.end()
-                                    })
-                                    
-                                    if len(matches) >= max_results:
-                                        break
-                            else:
-                                # Plain text search
-                                start = 0
-                                query_lower = query.lower()
-                                content_lower = content.lower()
-
-                                while start < len(content_lower):
-                                    pos = content_lower.find(query_lower, start)
-                                    if pos == -1:
-                                        break
-
-                                    # Find line and column
-                                    line_number = content.count('\n', 0, pos) + 1
-                                    line_start = content.rfind('\n', 0, pos) + 1
-                                    column = pos - line_start + 1
-                                    
-                                    # Get the whole line
-                                    line_end = content.find('\n', pos)
-                                    if line_end == -1:
-                                        line_end = len(content)
-                                    line_content = content[line_start:line_end]
-
-                                    # Extract context
-                                    start_idx = max(0, pos - 50)
-                                    end_idx = min(len(content), pos + len(query) + 50)
-                                    context = content[start_idx:end_idx]
-
-                                    matches.append({
-                                        "text": content[pos:pos + len(query)],
-                                        "line": line_number,
-                                        "column": column,
-                                        "line_content": line_content,
-                                        "context": context,
-                                        "start": pos,
-                                        "end": pos + len(query)
-                                    })
-
-                                    start = pos + len(query)
-                                    
-                                    if len(matches) >= max_results:
-                                        break
-
-                            if matches:
-                                results.append({
-                                    "file": os.path.relpath(file_path, workspace_root),
-                                    "matches": matches[:10],  # Limit matches per file
-                                    "total_matches": len(matches)
-                                })
-                                result_count += 1
-                        except Exception as e:
-                            logger.warning(f"Error searching in file {file_path}: {e}")
-
-                    # Walk directory tree
-                    for root, dirs, files in os.walk(validated_path):
-                        # Skip hidden directories
-                        dirs[:] = [d for d in dirs if not d.startswith('.')]
-
-                        for file in files:
-                            if result_count >= max_results:
-                                break
-
-                            # Skip hidden files
-                            if file.startswith('.'):
-                                continue
-
-                            # Apply file pattern
-                            if not fnmatch.fnmatch(file, file_pattern):
-                                continue
-
-                            file_path = os.path.join(root, file)
-                            search_in_file(file_path)
-
-                    return {
-                        "status": "success",
-                        "message": f"Found {result_count} files with matches for '{query}'",
-                        "query": query,
-                        "is_regex": is_regex,
-                        "path": validated_path,
-                        "relative_path": os.path.relpath(validated_path, workspace_root),
-                        "results": results,
-                        "total_results": result_count,
-                        "max_results_reached": result_count >= max_results
-                    }
-                except Exception as e:
-                    logger.error(f"Error searching files: {e}")
-                    return {"status": "error", "message": f"Error searching files: {str(e)}"}
-
-            fs_search_tool = Tool(
-                name="fs_search",
-                description="Search for files or content in files with advanced regex capabilities, binary search, and detailed results. Parameters: query, path, file_pattern, max_results, regex_flags, binary, max_file_size, recursive.",
-                func=fs_search
-            )
-            self.tools["fs_search"] = fs_search_tool
-
-            # 4.6 File Delete Tool
-            def fs_delete(path, recursive=False):
-                """
-                Delete a file or directory
-
-                Args:
-                    path: Path to the file or directory to delete
-                    recursive: Whether to recursively delete directories
-
-                Returns:
-                    Success status or error message
-                """
-                validated_path, error = validate_path(path)
-                if error:
-                    return error
-
-                try:
-                    if not os.path.exists(validated_path):
-                        return {"status": "error", "message": f"Path not found: {path}"}
-
-                    is_dir = os.path.isdir(validated_path)
-
-                    # Block deletion of project root
-                    if validated_path == workspace_root:
-                        return {"status": "error", "message": "Cannot delete project root directory"}
-
-                    # Handle directory deletion
-                    if is_dir:
-                        if not recursive:
-                            # Check if directory is empty
-                            if os.listdir(validated_path):
+                        # Security check: do not allow certain dangerous commands
+                        dangerous_commands = ["rm -rf", "format", "mkfs", "dd"]
+                        for dangerous in dangerous_commands:
+                            if dangerous in command.lower():
                                 return {
                                     "status": "error",
-                                    "message": f"Directory not empty: {path}. Use recursive=True to force deletion."
+                                    "message": f"Command contains potentially dangerous operation: {dangerous}",
+                                    "stdout": "",
+                                    "stderr": "Execution blocked for security reasons"
                                 }
-                            os.rmdir(validated_path)
-                        else:
-                            import shutil
-                            shutil.rmtree(validated_path)
-                    else:
-                        # Handle file deletion
-                        os.remove(validated_path)
-
-                    return {
-                        "status": "success",
-                        "message": f"Successfully deleted {'directory' if is_dir else 'file'}: {path}",
-                        "path": validated_path,
-                        "type": "directory" if is_dir else "file",
-                        "recursive": recursive if is_dir else None
-                    }
-                except Exception as e:
-                    logger.error(f"Error deleting path: {e}")
-                    return {"status": "error", "message": f"Error deleting path: {str(e)}"}
-
-            fs_delete_tool = Tool(
-                name="fs_delete",
-                description="Delete a file or directory. Use recursive=True to delete non-empty directories.",
-                func=fs_delete
-            )
-            self.tools["fs_delete"] = fs_delete_tool
-
-            logger.info(f"Created filesystem tools: fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete")
-
-            # Create Shell Execution Tool
-            try:
-                # Import ShellExecutionTool
-                from crewai_adapter import ShellExecutionTool
-
-                # Create and register the tool
-                shell_tool = ShellExecutionTool()
-                shell_tool_id = "shell_execute"
-                self.tools[shell_tool_id] = shell_tool
-                logger.info(f"Created shell execution tool with ID {shell_tool_id}")
-            except ImportError:
-                logger.warning("Could not import ShellExecutionTool from crewai_adapter")
-
-            # Create Code Diff Tool
-            try:
-                # Define code diff tool function
-                def code_diff(original_code, modified_code, file_path=None):
-                    """
-                    Generate a diff between original and modified code
-
-                    Args:
-                        original_code: Original code content
-                        modified_code: Modified code content
-                        file_path: Optional path to associate with the diff
-
-                    Returns:
-                        Dictionary with diff information
-                    """
-                    try:
-                        import difflib
-
-                        # Generate unified diff
-                        diff_lines = list(difflib.unified_diff(
-                            original_code.splitlines(),
-                            modified_code.splitlines(),
-                            fromfile="original" if not file_path else f"a/{file_path}",
-                            tofile="modified" if not file_path else f"b/{file_path}",
-                            lineterm="",
-                            n=3  # Context lines
-                        ))
-
-                        diff_text = "\n".join(diff_lines)
-
+                        
+                        try:
+                            project_path = getattr(self, "project_path", ".")
+                            working_dir = cwd if cwd else project_path
+                            process = subprocess.Popen(
+                                command,
+                                shell=True,
+                                cwd=working_dir,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True
+                            )
+                            
+                            stdout, stderr = process.communicate(timeout=30)  # 30-second timeout
+                            returncode = process.returncode
+                            
+                            return {
+                                "status": "success" if returncode == 0 else "error",
+                                "message": f"Command executed with return code {returncode}",
+                                "stdout": stdout,
+                                "stderr": stderr,
+                                "returncode": returncode
+                            }
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            return {
+                                "status": "error",
+                                "message": "Command execution timed out (30s limit)",
+                                "stdout": "",
+                                "stderr": "Execution timed out"
+                            }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error executing command: {str(e)}",
+                                "stdout": "",
+                                "stderr": str(e)
+                            }
+                
+                class CodeIndexingTool(BaseTool):
+                    name: str = "code_indexing"
+                    description: str = "Index and search code in the project. Use for finding relevant code segments."
+                    
+                    def _run(self, action: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+                        """Execute the code indexing operation and return results"""
                         return {
                             "status": "success",
-                            "diff": diff_text,
-                            "file_path": file_path,
-                            "has_changes": bool(diff_lines)
+                            "action": action,
+                            "message": f"Code indexing tool called with action '{action}'",
+                            "data": data
                         }
-                    except Exception as e:
+                
+                class CodeEditingTool(BaseTool):
+                    name: str = "code_editing"
+                    description: str = "Edit code files in the project. Use for reading, writing, and modifying code."
+                    
+                    def _run(self, action: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+                        """Execute the code editing operation and return results"""
+                        if not data or not isinstance(data, dict):
+                            return {
+                                "status": "error",
+                                "message": "Invalid data format"
+                            }
+                        
                         return {
-                            "status": "error",
-                            "message": f"Error generating diff: {str(e)}"
+                            "status": "success",
+                            "action": action,
+                            "message": f"Code editing tool called with action '{action}'",
+                            "data": data
                         }
+                
+                class StructuredJSONOutputTool(BaseTool):
+                    name: str = "structured_json_output"
+                    description: str = "Format output as structured JSON according to a schema."
+                    
+                    def _run(self, data: Dict[str, Any], schema: Optional[Dict] = None) -> Dict[str, Any]:
+                        """Format the data according to schema"""
+                        try:
+                            return {
+                                "status": "success",
+                                "result": data,
+                                "message": "Data formatted successfully"
+                            }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error formatting data: {str(e)}"
+                            }
 
-                # Create and register the tool
-                from crewai import Tool
-                diff_tool = Tool(
-                    name="code_diff",
-                    description="Generate a diff between original and modified code to show changes",
-                    func=code_diff
+                class ExtractJSONTool(BaseTool):
+                    name: str = "extract_json"
+                    description: str = "Extract JSON data from text strings."
+                    
+                    def _run(self, text: str) -> Dict[str, Any]:
+                        """Extract JSON from text"""
+                        try:
+                            # Look for JSON patterns with regex
+                            import re
+                            import json
+                            
+                            # Find all text that looks like JSON objects
+                            pattern = r'\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}'
+                            matches = re.findall(pattern, text)
+                            
+                            for match in matches:
+                                try:
+                                    return json.loads(match)
+                                except:
+                                    continue
+                                    
+                            # Try the whole text
+                            return json.loads(text)
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error extracting JSON: {str(e)}",
+                                "text": text
+                            }
+
+                class FileSystemReadTool(BaseTool):
+                    name: str = "fs_read"
+                    description: str = "Read files from the file system."
+                    
+                    def _run(self, path: str) -> Dict[str, Any]:
+                        """Read file contents"""
+                        try:
+                            with open(path, 'r') as f:
+                                content = f.read()
+                            return {
+                                "status": "success",
+                                "content": content,
+                                "message": f"Successfully read file: {path}"
+                            }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error reading file: {str(e)}"
+                            }
+
+                class FileSystemWriteTool(BaseTool):
+                    name: str = "fs_write"
+                    description: str = "Write to files in the file system."
+                    
+                    def _run(self, path: str, content: str, mode: str = 'w') -> Dict[str, Any]:
+                        """Write content to file"""
+                        try:
+                            with open(path, mode) as f:
+                                f.write(content)
+                            return {
+                                "status": "success",
+                                "message": f"Successfully wrote to file: {path}"
+                            }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error writing to file: {str(e)}"
+                            }
+
+                class FileSystemUpdateTool(BaseTool):
+                    name: str = "fs_update"
+                    description: str = "Update existing files with edits or patches."
+                    
+                    def _run(self, path: str, edit_operation: Dict[str, Any]) -> Dict[str, Any]:
+                        """Update file with edits"""
+                        try:
+                            # Simple implementation - replace old text with new text
+                            if 'old_text' not in edit_operation or 'new_text' not in edit_operation:
+                                return {
+                                    "status": "error",
+                                    "message": "Edit operation must contain old_text and new_text"
+                                }
+                                
+                            with open(path, 'r') as f:
+                                content = f.read()
+                                
+                            # Replace old text with new text
+                            old_text = edit_operation['old_text']
+                            new_text = edit_operation['new_text']
+                            updated_content = content.replace(old_text, new_text)
+                            
+                            # Write updated content back to file
+                            with open(path, 'w') as f:
+                                f.write(updated_content)
+                                
+                            return {
+                                "status": "success",
+                                "message": f"Successfully updated file: {path}"
+                            }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error updating file: {str(e)}"
+                            }
+
+                class FileSystemListTool(BaseTool):
+                    name: str = "fs_list"
+                    description: str = "List files and directories in the file system."
+                    
+                    def _run(self, path: str = '.') -> Dict[str, Any]:
+                        """List directory contents"""
+                        try:
+                            items = os.listdir(path)
+                            files = []
+                            directories = []
+                            
+                            for item in items:
+                                item_path = os.path.join(path, item)
+                                if os.path.isdir(item_path):
+                                    directories.append(item)
+                                else:
+                                    files.append(item)
+                                    
+                            return {
+                                "status": "success",
+                                "files": files,
+                                "directories": directories,
+                                "message": f"Listed {len(files)} files and {len(directories)} directories in {path}"
+                            }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error listing directory: {str(e)}"
+                            }
+
+                class FileSystemSearchTool(BaseTool):
+                    name: str = "fs_search"
+                    description: str = "Search for files matching a pattern."
+                    
+                    def _run(self, pattern: str, path: str = '.', recursive: bool = True) -> Dict[str, Any]:
+                        """Search for files matching pattern"""
+                        try:
+                            import glob
+                            
+                            search_pattern = os.path.join(path, pattern)
+                            if recursive:
+                                search_pattern = os.path.join(path, "**", pattern)
+                                matches = glob.glob(search_pattern, recursive=True)
+                            else:
+                                matches = glob.glob(search_pattern)
+                                
+                            return {
+                                "status": "success",
+                                "matches": matches,
+                                "message": f"Found {len(matches)} files matching pattern: {pattern}"
+                            }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error searching for files: {str(e)}"
+                            }
+
+                class FileSystemDeleteTool(BaseTool):
+                    name: str = "fs_delete"
+                    description: str = "Delete files or empty directories."
+                    
+                    def _run(self, path: str) -> Dict[str, Any]:
+                        """Delete file or directory"""
+                        try:
+                            if os.path.isdir(path):
+                                os.rmdir(path)  # Only removes empty directories
+                                return {
+                                    "status": "success",
+                                    "message": f"Successfully deleted directory: {path}"
+                                }
+                            else:
+                                os.remove(path)
+                                return {
+                                    "status": "success",
+                                    "message": f"Successfully deleted file: {path}"
+                                }
+                        except Exception as e:
+                            return {
+                                "status": "error",
+                                "message": f"Error deleting: {str(e)}"
+                            }
+                
+                # Create instances of our tools
+                learning_tool = LearningSystemTool()
+                pm_tool = ProjectManagementTool() 
+                metadata_tool = MetadataTool()
+                shell_tool = ShellExecutionTool()
+                indexing_tool = CodeIndexingTool()
+                editing_tool = CodeEditingTool()
+                json_output_tool = StructuredJSONOutputTool()
+                extract_json_tool = ExtractJSONTool()
+                fs_read_tool = FileSystemReadTool()
+                fs_write_tool = FileSystemWriteTool()
+                fs_update_tool = FileSystemUpdateTool()
+                fs_list_tool = FileSystemListTool()
+                fs_search_tool = FileSystemSearchTool()
+                fs_delete_tool = FileSystemDeleteTool()
+                
+                # Add tools to dictionary
+                self.tools = {
+                    "learning_system": learning_tool,
+                    "project_management": pm_tool,
+                    "metadata": metadata_tool,
+                    "shell_execution": shell_tool,
+                    "code_indexing": indexing_tool,
+                    "code_editing": editing_tool,
+                    "structured_json_output": json_output_tool,
+                    "extract_json": extract_json_tool,
+                    "fs_read": fs_read_tool,
+                    "fs_write": fs_write_tool,
+                    "fs_update": fs_update_tool,
+                    "fs_list": fs_list_tool,
+                    "fs_search": fs_search_tool,
+                    "fs_delete": fs_delete_tool
+                }
+                
+                # Create a list of tools IDs
+                default_tools = list(self.tools.keys())
+                
+                logger.info(f"Created {len(default_tools)} BaseTool instances compatible with CrewAI: {', '.join(default_tools)}")
+                
+            except ImportError:
+                logger.warning("Could not import BaseTool from crewai.tools - falling back to basic tool definitions")
+                
+                # Define a basic Tool class if imports fail
+                class Tool:
+                    def __init__(self, name, description, func):
+                        self.name = name
+                        self.description = description
+                        self.func = func
+                    def __call__(self, *args, **kwargs):
+                        return self.func(*args, **kwargs)
+
+                # 1. Create the Learning System Tool
+                def learning_system_tool(action, data=None):
+                    """Tool for interacting with the learning system"""
+                    return {
+                        "status": "success",
+                        "action": action,
+                        "message": f"Learning system tool called with action '{action}'",
+                        "data": data
+                    }
+
+                learning_tool = Tool(
+                    name="learning_system",
+                    description="Access and update the agent's learning and memory system. Use for storing experiences, retrieving knowledge, and reflection.",
+                    func=learning_system_tool
                 )
-                diff_tool_id = "code_diff"
-                self.tools[diff_tool_id] = diff_tool
-                logger.info(f"Created code diff tool with ID {diff_tool_id}")
-            except Exception as e:
-                logger.warning(f"Could not create code diff tool: {e}")
+                
+                # 2. Create the Project Management Tool
+                def project_management_tool(action, data=None):
+                    """Tool for interacting with the project management system"""
+                    return {
+                        "status": "success",
+                        "action": action,
+                        "message": f"Project management tool called with action '{action}'",
+                        "data": data
+                    }
 
-            # Define default tools that will be assigned to all new agents
-            default_tools = [
-                "learning_system",
-                "project_management",
-                "json_output",
-                "extract_json",
-                "fs_read",
-                "fs_write",
-                "fs_update",
-                "fs_list",
-                "fs_search",
-                "fs_delete",
-                "shell_execute",  # Shell execution tool
-                "code_diff"       # Code diff tool
-            ]
-            self.default_tools = default_tools
-            logger.info(f"Created default tools list with {len(default_tools)} tools: {', '.join(default_tools)}")
+                pm_tool = Tool(
+                    name="project_management",
+                    description="Manage tasks, assignments, and project structure. Use for creating tasks, updating status, and coordination.",
+                    func=project_management_tool
+                )
+                
+                # Add the tools to the dictionary
+                self.tools = {
+                    "learning_system": learning_tool,
+                    "project_management": pm_tool,
+                }
+                
+                logger.warning("Created fallback tools that may not be compatible with CrewAI validation")
 
-            # Save the tool state
+            # Save the default tools list
+            self.default_tools = list(self.tools.keys())
+            logger.info(f"Created default tools list with {len(self.default_tools)} tools: {', '.join(self.default_tools)}")
+            
+            # Save tools to disk
             self._save_tool_state()
-
+            
         except Exception as e:
             logger.error(f"Error creating default tools: {e}")
+            self.tools = {}
+            self.default_tools = []
 
     def _save_tool_state(self):
         """Save the current tool state to the .tribe directory"""
@@ -1104,39 +643,73 @@ class CrewAIServer:
     def _load_state(self):
         """Load existing agents, tasks, and crews from the .tribe directory"""
         try:
-            # Load tools first
-            tools_dir = os.path.join(self.tribe_path, "tools")
-            tools_path = os.path.join(tools_dir, "tools.json")
-            if os.path.exists(tools_path):
-                with open(tools_path, "r") as f:
-                    tools_data = json.load(f)
-                    for tool_data in tools_data:
-                        tool_id = tool_data.get("id")
-                        # Skip if tool already exists
-                        if tool_id in self.tools:
-                            continue
-                        # Try to recreate the tool
-                        tool = self._create_tool_from_data(tool_data)
-                        if tool:
-                            self.tools[tool_id] = tool
-
-            # Load agent-tool relationships
-            agent_tools_path = os.path.join(tools_dir, "agent_tools.json")
-            if os.path.exists(agent_tools_path):
-                with open(agent_tools_path, "r") as f:
-                    self.agent_tools = json.load(f)
-
-            # Load agents
-            agents_path = os.path.join(self.tribe_path, "agents.json")
-            if os.path.exists(agents_path):
-                with open(agents_path, "r") as f:
+            # Attempt to load agents
+            agents_file = os.path.join(self.tribe_path, "agents.json")
+            if os.path.exists(agents_file):
+                with open(agents_file, "r") as f:
                     agents_data = json.load(f)
-                    for agent_data in agents_data:
-                        # Convert to CrewAI Agent objects
-                        agent = self._create_agent_from_data(agent_data)
-                        if agent and agent_data.get("id") in self.agent_tools:
-                            # Attach tools to the agent
-                            self._attach_tools_to_agent(agent, self.agent_tools[agent_data.get("id")])
+                
+                # Process each agent
+                for agent_data in agents_data:
+                    # Create the agent
+                    agent = self._create_agent_from_data(agent_data)
+                    if agent:
+                        # Store the agent
+                        agent_id = agent_data.get("id", None)
+                        if agent_id:
+                            self.agents[agent_id] = agent
+                            logger.info(f"Loaded agent with ID '{agent_id}'")
+                            
+                            # Check for tools to attach
+                            tool_ids = agent_data.get("tools", [])
+                            if tool_ids:
+                                # Ensure we have all tools before attaching
+                                if not self.tools:
+                                    self._create_default_tools()
+                                
+                                # Get available tools and attach them
+                                available_tool_ids = [t_id for t_id in tool_ids if t_id in self.tools]
+                                if available_tool_ids:
+                                    self._attach_tools_to_agent(agent, available_tool_ids)
+                                    self.agent_tools[agent_id] = available_tool_ids
+                                    logger.info(f"Attached {len(available_tool_ids)} tools to agent {agent_id}")
+                        else:
+                            logger.warning(f"Loaded agent without ID, skipping")
+                
+                logger.info(f"Loaded {len(self.agents)} agents")
+            else:
+                logger.info("No agents.json file found, skipping agent loading")
+
+            # Create a default agent with ID 'agent-1' if no agents are loaded
+            if not self.agents or 'agent-1' not in self.agents:
+                # Check if we should create a default agent
+                logger.info(f"No agents found in state or agent-1 missing. Creating default agent.")
+                try:
+                    # First ensure we have all the tools we need
+                    if not self.tools:
+                        self._create_default_tools()
+                    
+                    # Create a default agent
+                    agent_data = {
+                        "id": "agent-1",
+                        "name": "AI Assistant",
+                        "role": "AI Assistant",
+                        "goal": "Help the user accomplish their tasks",
+                        "backstory": "An AI assistant created to help with this project."
+                    }
+                    agent = self._create_agent_from_data(agent_data)
+                    if agent:
+                        self.agents["agent-1"] = agent
+                        logger.info("Created default agent with ID 'agent-1'")
+                        
+                        # Get a list of all available tool IDs
+                        available_tool_ids = list(self.tools.keys())
+                        if available_tool_ids:
+                            self._attach_tools_to_agent(agent, available_tool_ids)
+                            self.agent_tools["agent-1"] = available_tool_ids
+                            logger.info(f"Attached {len(available_tool_ids)} available tools to agent-1: {', '.join(available_tool_ids)}")
+                except Exception as e:
+                    logger.error(f"Error creating default agent: {e}")
 
             # Load tasks
             tasks_path = os.path.join(self.tribe_path, "tasks.json")
@@ -1358,26 +931,76 @@ class CrewAIServer:
             tools_to_attach = []
             for tool_id in tool_ids_to_use:
                 if tool_id in self.tools:
-                    # IMPORTANT: Wrap our custom tools in CrewAI-compatible tools if possible
+                    # Get the raw tool
                     raw_tool = self.tools[tool_id]
-                    # Check if we have the converter function available through crewai module
-                    if hasattr(crewai, "_convert_to_crewai_tool"):
-                        try:
-                            # Use the converter function
-                            converted_tool = crewai._convert_to_crewai_tool(raw_tool)
-                            tools_to_attach.append(converted_tool)
-                            logger.info(f"Added wrapped tool {tool_id} to agent {agent.name}")
-                        except Exception as convert_err:
-                            logger.error(f"Error converting tool {tool_id}: {convert_err}")
-                            # Fall back to using the raw tool
+                    
+                    # Check if tool is already a BaseTool instance (our new implementation)
+                    try:
+                        from crewai.tools import BaseTool
+                        if isinstance(raw_tool, BaseTool):
+                            # Already a valid BaseTool, just use it
                             tools_to_attach.append(raw_tool)
-                            logger.warning(f"Added raw tool {tool_id} to agent {agent.name} (could not convert)")
-                    else:
-                        # No converter available, use raw tool
-                        tools_to_attach.append(raw_tool)
-                        logger.info(f"Added tool {tool_id} to agent {agent.name} (no converter available)")
+                            logger.info(f"Added BaseTool {tool_id} to agent {agent.name}")
+                            continue
+                    except ImportError:
+                        # BaseTool not available, will try other approaches
+                        pass
+                    
+                    # Approach 2: Try to import crewai module and use converter if available
+                    try:
+                        import crewai
+                        # Check if we have the converter function available 
+                        if hasattr(crewai, "_convert_to_crewai_tool"):
+                            try:
+                                # Use the converter function
+                                converted_tool = crewai._convert_to_crewai_tool(raw_tool)
+                                tools_to_attach.append(converted_tool)
+                                logger.info(f"Added converted tool {tool_id} to agent {agent.name}")
+                                continue
+                            except Exception as convert_err:
+                                logger.error(f"Error converting tool {tool_id}: {convert_err}")
+                    except (ImportError, ModuleNotFoundError) as import_err:
+                        logger.warning(f"Could not import crewai module: {import_err}")
+                    except Exception as e:
+                        logger.error(f"Error in crewai tool conversion: {e}")
+                        
+                    # Approach 3: Try to create a BaseTool wrapper dynamically
+                    try:
+                        from crewai.tools import BaseTool
+                        
+                        # Create a dynamic BaseTool wrapper class
+                        class DynamicToolWrapper(BaseTool):
+                            name = getattr(raw_tool, 'name', tool_id)
+                            description = getattr(raw_tool, 'description', f"Tool for {tool_id}")
+                            
+                            def _run(self, *args, **kwargs):
+                                """Run the wrapped tool"""
+                                try:
+                                    # Try to call the original tool
+                                    if hasattr(raw_tool, '__call__'):
+                                        return raw_tool(*args, **kwargs)
+                                    elif hasattr(raw_tool, 'run'):
+                                        return raw_tool.run(*args, **kwargs)
+                                    elif hasattr(raw_tool, '_run'):
+                                        return raw_tool._run(*args, **kwargs)
+                                    else:
+                                        return {"error": "No callable method found on tool"}
+                                except Exception as run_err:
+                                    return {"error": f"Error running tool: {str(run_err)}"}
+                        
+                        # Create an instance of the wrapper
+                        wrapped_tool = DynamicToolWrapper()
+                        tools_to_attach.append(wrapped_tool)
+                        logger.info(f"Added dynamically wrapped BaseTool {tool_id} to agent {agent.name}")
+                        continue
+                    except Exception as wrap_err:
+                        logger.error(f"Error creating BaseTool wrapper: {wrap_err}")
+                    
+                    # Final fallback: Add the raw tool and hope for the best
+                    logger.warning(f"Adding raw tool {tool_id} as last resort - may not work with CrewAI validation")
+                    tools_to_attach.append(raw_tool)
                 else:
-                    logger.warning(f"Tool {tool_id} not found in available tools")
+                    logger.warning(f"Tool {tool_id} not found, skipping")
 
             # Set the tools on the agent
             agent.tools = tools_to_attach
@@ -1748,24 +1371,56 @@ class CrewAIServer:
             agent = None
             creation_errors = []
 
-            # Approach 1: Try with our customized ExtendedAgent
+            # First, ensure we have created the default tools
+            if not self.tools:
+                self._create_default_tools()
+
+            # Approach 1: Try with CrewAI's Agent directly
             try:
-                from crewai_adapter import ExtendedAgent as AdapterExtendedAgent
-                agent = AdapterExtendedAgent(**agent_args)
-                logger.info(f"Created agent using adapter's ExtendedAgent for {name_value}")
-            except Exception as e:
-                creation_errors.append(f"Adapter ExtendedAgent error: {str(e)}")
-
-            # Approach 2: Try with CrewAI's ExtendedAgent if available
-            if agent is None:
+                from crewai import Agent
+                agent = Agent(**agent_args)
+                logger.info(f"Created agent using CrewAI's Agent for {name_value}")
+                
+                # Try to set the ID directly on the agent
                 try:
-                    from crewai import ExtendedAgent
-                    agent = ExtendedAgent(**agent_args)
-                    logger.info(f"Created agent using CrewAI's ExtendedAgent for {name_value}")
+                    # First ensure agent has a proper metadata attribute
+                    if not hasattr(agent, "metadata") or agent.metadata is None:
+                        setattr(agent, "metadata", {})
+                        logger.info(f"Created new metadata dictionary for agent")
+                    elif not isinstance(agent.metadata, dict):
+                        # If metadata exists but isn't a dict, convert it
+                        old_metadata = agent.metadata
+                        setattr(agent, "metadata", {})
+                        logger.info(f"Converted non-dict metadata type {type(old_metadata)} to dict")
+                    
+                    # Now try to set ID in various ways
+                    if hasattr(agent, "id"):
+                        setattr(agent, "id", agent_id)
+                        logger.info(f"Set agent.id to {agent_id}")
+                    
+                    # Always store ID in metadata regardless
+                    try:
+                        agent.metadata["id"] = agent_id
+                        agent.metadata["character_name"] = name_value
+                        logger.info(f"Set id={agent_id} and character_name={name_value} in agent.metadata")
+                    except (TypeError, AttributeError) as metadata_err:
+                        # Direct dict approach as fallback
+                        logger.warning(f"Error setting metadata the normal way: {metadata_err}")
+                        agent.__dict__["metadata"] = {"id": agent_id, "character_name": name_value}
+                        logger.info(f"Set metadata directly in agent.__dict__")
                 except Exception as e:
-                    creation_errors.append(f"CrewAI ExtendedAgent error: {str(e)}")
+                    logger.warning(f"Failed to set agent attributes: {e}")
+                    # Most drastic fallback - make sure agent at least has some way to access its name
+                    try:
+                        agent.__dict__["_id"] = agent_id
+                        agent.__dict__["metadata"] = {"id": agent_id, "character_name": name_value}
+                        logger.info(f"Used fallback approach to set agent id and metadata")
+                    except Exception as fallback_err:
+                        logger.error(f"All attempts to set agent attributes failed: {fallback_err}")
+            except Exception as e:
+                creation_errors.append(f"CrewAI Agent error: {str(e)}")
 
-            # Approach 3: Try with only required fields as fallback
+            # Approach 2: Try with only required fields as fallback
             if agent is None:
                 try:
                     essential_args = {
@@ -1780,25 +1435,70 @@ class CrewAIServer:
                     if 'llm' in agent_args:
                         essential_args['llm'] = agent_args['llm']
 
+                    # Try to create with simplified arguments
+                    from crewai import Agent
                     agent = Agent(**essential_args)
                     logger.info(f"Created basic Agent for {name_value}")
 
                     # Add name and metadata manually to the agent object
                     try:
-                        agent.__dict__['_name'] = name_value
-                        agent.__dict__['metadata'] = agent.__dict__.get('metadata', {})
-                        if isinstance(agent.__dict__['metadata'], dict):
-                            agent.__dict__['metadata']['name'] = name_value
-                            agent.__dict__['metadata']['character_name'] = name_value
+                        if hasattr(agent, 'name'):
+                            setattr(agent, 'name', name_value)
+                        else:
+                            agent.__dict__['_name'] = name_value
+                            
+                        # Initialize metadata and set the ID
+                        if not hasattr(agent, "metadata") or agent.metadata is None:
+                            setattr(agent, "metadata", {})
+                            logger.info(f"Created new metadata dict in basic agent fallback")
+                        elif not isinstance(agent.metadata, dict):
+                            # If attribute exists but isn't a dict
+                            old_metadata = agent.metadata
+                            setattr(agent, "metadata", {})
+                            logger.info(f"Converted non-dict metadata {type(old_metadata)} to dict in fallback")
+                            
+                        # Set the ID via multiple approaches for robustness
+                        if hasattr(agent, "id"):
+                            setattr(agent, "id", agent_id)
+                            logger.info(f"Set agent.id to {agent_id} in fallback")
+                            
+                        try:
+                            agent.metadata['id'] = agent_id
+                            agent.metadata['name'] = name_value
+                            agent.metadata['character_name'] = name_value
+                            logger.info(f"Set metadata attributes in fallback code path")
+                        except (TypeError, AttributeError) as dict_err:
+                            # Dictionary access failed, use __dict__ directly
+                            logger.warning(f"Dict access failed: {dict_err}, using __dict__ fallback")
+                            agent.__dict__['metadata'] = {
+                                'id': agent_id,
+                                'name': name_value,
+                                'character_name': name_value
+                            }
+                            logger.info(f"Set metadata through __dict__ in fallback path")
                     except Exception as set_err:
-                        logger.warning(f"Could not add name to agent __dict__: {set_err}")
+                        logger.warning(f"Could not add properties to agent: {set_err}")
+                        # Final attempt - just make sure the agent has an ID somewhere
+                        try:
+                            agent.__dict__['_id'] = agent_id
+                            agent.__dict__['_name'] = name_value
+                            agent.__dict__['metadata'] = {
+                                'id': agent_id,
+                                'name': name_value,
+                                'character_name': name_value
+                            }
+                            logger.info(f"Used direct __dict__ assignment in final fallback")
+                        except Exception as final_err:
+                            logger.error(f"All property setting approaches failed: {final_err}")
+
+                    logger.debug(f"Created agent with ID {agent.id}, name: {getattr(agent, 'name', None)}")
                 except Exception as e:
                     creation_errors.append(f"Basic Agent error: {str(e)}")
 
-            # If all approaches failed
+            # Log if all approaches failed
             if agent is None:
                 logger.error(f"All agent creation approaches failed: {creation_errors}")
-                raise RuntimeError(f"Failed to create agent: {creation_errors}")
+                return None
 
             # Add property to safely get name if possible
             if not hasattr(agent, 'name') or not callable(getattr(agent, 'name', None)):
@@ -1864,9 +1564,42 @@ class CrewAIServer:
 
             # Get the assigned agent
             agent_id = task_data.get("agent_id")
-            agent = self.agents.get(agent_id)
+            agent = None
+            
+            if agent_id:
+                agent = self.agents.get(agent_id)
+                
+                # If agent is found but might be a dictionary or missing metadata
+                if agent:
+                    logger.info(f"Converting agent {agent_id} to proper Agent object for task creation")
+                    try:
+                        agent = self._convert_to_agent_object(agent)
+                        # Update the agent in the agents dictionary
+                        self.agents[agent_id] = agent
+                    except Exception as conv_err:
+                        logger.error(f"Error converting agent for task: {conv_err}")
+                else:
+                    logger.warning(f"Agent {agent_id} not found for task creation")
+                    # Try to find the agent by other means (fallback to first agent)
+                    if self.agents:
+                        first_agent_id = next(iter(self.agents))
+                        agent = self.agents[first_agent_id]
+                        logger.info(f"Using fallback agent {first_agent_id} for task")
+                        # Ensure it's a proper Agent object
+                        try:
+                            agent = self._convert_to_agent_object(agent)
+                            # Update the agent in the agents dictionary
+                            self.agents[first_agent_id] = agent
+                        except Exception as conv_err:
+                            logger.error(f"Error converting fallback agent: {conv_err}")
+
+            # Validate agent before creating task
+            if agent is None:
+                logger.error("No agent available for task creation")
+                return None
 
             # Create the CrewAI Task
+            logger.info(f"Creating task with agent: {agent} (type: {type(agent)})")
             task = Task(
                 description=task_data.get("description", "No description provided"),
                 agent=agent,
@@ -4299,7 +4032,21 @@ class CrewAIServer:
                     logger.info(f"Resolved agent '{agent_id}' to agent ID: {found_agent.id}")
                     agent_id = found_agent.id
                 else:
-                    logger.warning(f"Could not find agent matching '{agent_id}'")
+                    # If we still can't find the agent, use the first available agent
+                    if self.agents:
+                        first_agent_id = next(iter(self.agents))
+                        logger.warning(f"Could not find agent matching '{agent_id}'. Using first available agent: {first_agent_id}")
+                        agent_id = first_agent_id
+                    else:
+                        # Try to load state to restore any available agents
+                        logger.warning(f"No agents available. Attempting to load state.")
+                        self._load_state()
+                        if self.agents:
+                            first_agent_id = next(iter(self.agents))
+                            logger.warning(f"Loaded agents from state. Using agent: {first_agent_id}")
+                            agent_id = first_agent_id
+                        else:
+                            logger.warning(f"Could not find agent matching '{agent_id}' and no agents available")
 
             # Handle group messages
             if is_group:
@@ -4327,54 +4074,86 @@ class CrewAIServer:
                 # Get the specified agent
                 agent = self.agents.get(agent_id)
 
-                # Try to create the agent if it doesn't exist
+                # If agent not found, use the first available agent instead of creating a generic one
                 if not agent:
-                    logger.warning(f"Agent with ID {agent_id} not found. Attempting to create a generic agent.")
-
-                    # We don't have enough info to create a real agent, but we'll make a best effort
-                    # with a generic one to handle the message
-                    try:
-                        agent_data = {
-                            "id": agent_id,
-                            "name": f"Agent {agent_id}",
-                            "role": "AI Assistant",
-                            "goal": "Respond to user messages helpfully",
-                            "backstory": "An AI assistant created to help with this project."
-                        }
-
-                        # Create the agent
-                        create_result = self.create_agent(agent_data)
-                        if create_result.get("status") == "created":
-                            agent = self.agents.get(agent_id)
-                            logger.info(f"Successfully created generic agent for {agent_id}")
-                        else:
-                            logger.error(f"Failed to create generic agent: {create_result}")
-                            raise Exception(f"Agent with ID {agent_id} not found and couldn't create a replacement")
-                    except Exception as agent_error:
-                        logger.error(f"Error creating generic agent: {agent_error}")
-                        return {"status": "error", "message": f"Agent with ID {agent_id} not found: {agent_error}"}
+                    # Try loading state first to ensure we have all persisted agents
+                    if not self.agents:
+                        self._load_state()
+                    
+                    # Use the first available agent (preferably agent-1)
+                    if 'agent-1' in self.agents:
+                        logger.warning(f"Agent with ID {agent_id} not found. Using agent-1 instead.")
+                        agent_id = 'agent-1'
+                        agent = self.agents['agent-1']
+                    elif self.agents:
+                        first_agent_id = next(iter(self.agents))
+                        logger.warning(f"Agent with ID {agent_id} not found. Using existing agent: {first_agent_id}")
+                        agent_id = first_agent_id
+                        agent = self.agents[agent_id]
+                    else:
+                        logger.error(f"No agents available to handle the message")
+                        return {"status": "error", "message": f"No agents available to handle the message"}
 
                 # If we have metadata or direct_to is specified, attach it to the agent first
                 if (metadata and isinstance(metadata, dict)) or direct_to:
                     logger.info(f"Attaching metadata to agent {agent_id}")
 
-                    # Ensure agent has metadata dict
-                    if not hasattr(agent, 'metadata') or agent.metadata is None:
-                        agent.metadata = {}
-                        logger.info(f"Created new metadata dictionary for agent {agent_id}")
-                    else:
+                    # Ensure agent has metadata dict - handle different agent types
+                    try:
+                        if not hasattr(agent, 'metadata'):
+                            setattr(agent, 'metadata', {})
+                            logger.info(f"Created new metadata attribute for agent {agent_id}")
+                        elif agent.metadata is None:
+                            agent.metadata = {}
+                            logger.info(f"Initialized metadata dictionary for agent {agent_id}")
+                        elif not isinstance(agent.metadata, dict):
+                            # Convert non-dict metadata to dict
+                            old_metadata = agent.metadata
+                            agent.metadata = {}
+                            logger.info(f"Converted non-dict metadata to dict for agent {agent_id}: {type(old_metadata)}")
+                        
+                        # Check that we can access the metadata as a dict
+                        if not hasattr(agent.metadata, 'get') or not callable(getattr(agent.metadata, 'get', None)):
+                            # If metadata exists but isn't functioning as a dict, recreate it
+                            agent.metadata = {}
+                            logger.info(f"Recreated metadata dict for agent {agent_id} after validation failure")
+                            
+                        # Log existing metadata keys for debugging
                         logger.info(f"Agent {agent_id} existing metadata keys: {list(agent.metadata.keys()) if hasattr(agent.metadata, 'keys') else 'N/A'}")
+                    except Exception as metadata_err:
+                        # Create metadata in __dict__ directly as fallback
+                        logger.warning(f"Error accessing agent metadata normally, using fallback approach: {metadata_err}")
+                        agent.__dict__['metadata'] = {}
+                        logger.info(f"Created metadata in agent.__dict__ for agent {agent_id}")
 
                     # Add the metadata from the passed dict
                     if metadata and isinstance(metadata, dict):
-                        for key, value in metadata.items():
-                            agent.metadata[key] = value
-                            logger.info(f"Added metadata key '{key}' to agent {agent_id}")
+                        try:
+                            for key, value in metadata.items():
+                                try:
+                                    agent.metadata[key] = value
+                                    logger.info(f"Added metadata key '{key}' to agent {agent_id}")
+                                except (TypeError, AttributeError) as set_err:
+                                    # Fallback to setting in __dict__ if attribute access fails
+                                    logger.warning(f"Could not set metadata['{key}'] directly, trying fallback: {set_err}")
+                                    agent.__dict__['metadata'][key] = value
+                                    logger.info(f"Added metadata key '{key}' to agent.__dict__['metadata'] for agent {agent_id}")
+                        except Exception as metadata_add_err:
+                            logger.error(f"Failed to add metadata to agent {agent_id}: {metadata_add_err}")
 
                     # If direct_to is specified, add it to ensure personality traits are included
                     if direct_to:
-                        agent.metadata['directTo'] = direct_to
-                        logger.info(f"Added directTo={direct_to} metadata to agent {agent_id}")
+                        try:
+                            agent.metadata['directTo'] = direct_to
+                            logger.info(f"Added directTo={direct_to} metadata to agent {agent_id}")
+                        except Exception as direct_to_err:
+                            logger.warning(f"Could not add directTo to agent metadata: {direct_to_err}")
+                            # Try fallback approach
+                            try:
+                                agent.__dict__['metadata']['directTo'] = direct_to
+                                logger.info(f"Added directTo={direct_to} metadata to agent.__dict__ for agent {agent_id}")
+                            except Exception:
+                                logger.error(f"Failed to add directTo to agent {agent_id} through any method")
 
                     # Add debug info about personality traits
                     logger.info(f"Agent {agent_id} traits: {getattr(agent, 'traits', 'No traits')}")
@@ -4386,17 +4165,20 @@ class CrewAIServer:
 
                     # Force the agent to update its system prompt with metadata
                     if hasattr(agent, '_ensure_metadata_in_prompt'):
-                        agent._ensure_metadata_in_prompt()
-                        logger.info(f"Refreshed agent {agent_id} system prompt with metadata")
+                        try:
+                            agent._ensure_metadata_in_prompt()
+                            logger.info(f"Refreshed agent {agent_id} system prompt with metadata")
 
-                        # Check if the update was successful
-                        if hasattr(agent, 'system_prompt') and isinstance(agent.system_prompt, str):
-                            if "# Character Information" in agent.system_prompt:
-                                logger.info(f"Successfully added Character Information to agent {agent_id} system prompt")
+                            # Check if the update was successful
+                            if hasattr(agent, 'system_prompt') and isinstance(agent.system_prompt, str):
+                                if "# Character Information" in agent.system_prompt:
+                                    logger.info(f"Successfully added Character Information to agent {agent_id} system prompt")
+                                else:
+                                    logger.warning(f"Character Information NOT FOUND in agent {agent_id} system prompt after refresh!")
                             else:
-                                logger.warning(f"Character Information NOT FOUND in agent {agent_id} system prompt after refresh!")
-                        else:
-                            logger.warning(f"Agent {agent_id} has no system_prompt attribute after refresh!")
+                                logger.warning(f"Agent {agent_id} has no system_prompt attribute after refresh!")
+                        except Exception as prompt_refresh_err:
+                            logger.warning(f"Failed to refresh agent prompt with metadata: {prompt_refresh_err}")
 
                 # Check if this is a debug message asking to see the prompt
                 task_description = message
@@ -4928,6 +4710,88 @@ You can access these tools by mentioning them in your responses. Remember that y
         except Exception as e:
             logger.error(f"Error handling request: {e}", exc_info=True)
             return {"status": "error", "message": f"Failed to handle request: {str(e)}"}
+
+    def _convert_to_agent_object(self, agent_or_dict):
+        """
+        Convert a dictionary to an Agent object or ensure an existing object has necessary properties.
+        If the input is already an Agent object, ensure it has the required attributes properly set.
+
+        Args:
+            agent_or_dict (dict or Agent): Either a dictionary with agent data or an Agent object
+
+        Returns:
+            Agent: A proper Agent object with all required attributes
+        """
+        logger.info(f"Converting agent to proper Agent object: {type(agent_or_dict)}")
+        
+        # If it's already an Agent object, ensure it has metadata
+        if hasattr(agent_or_dict, '__class__') and agent_or_dict.__class__.__name__ == 'Agent':
+            agent = agent_or_dict
+            logger.info(f"Input is already an Agent object: {agent}")
+            
+            # Ensure metadata exists and is a dict
+            try:
+                if not hasattr(agent, 'metadata') or agent.metadata is None:
+                    logger.info("Adding missing metadata attribute to Agent object")
+                    setattr(agent, 'metadata', {})
+                elif not isinstance(agent.metadata, dict):
+                    logger.info(f"Converting non-dict metadata {type(agent.metadata)} to dict")
+                    # Save old value in case it's important
+                    old_metadata = agent.metadata
+                    setattr(agent, 'metadata', {})
+                    # Add a reference to the old value
+                    agent.metadata['_old_metadata'] = str(old_metadata)
+            except Exception as e:
+                logger.warning(f"Error setting agent metadata: {e}")
+                # Direct dictionary approach
+                try:
+                    agent.__dict__['metadata'] = {}
+                    logger.info("Created metadata via __dict__ as fallback")
+                except Exception as dict_err:
+                    logger.error(f"Failed to create metadata via any method: {dict_err}")
+            
+            return agent
+            
+        # If we got a dictionary, convert it to an Agent object
+        elif isinstance(agent_or_dict, dict):
+            logger.info(f"Converting dictionary to Agent object, keys: {agent_or_dict.keys()}")
+            
+            # Try to extract the required fields from the dictionary
+            agent_id = agent_or_dict.get('id', str(uuid.uuid4()))
+            agent_data = {
+                'role': agent_or_dict.get('role', 'AI Assistant'),
+                'goal': agent_or_dict.get('goal', 'Help the user with their tasks'),
+                'backstory': agent_or_dict.get('backstory', 'An AI assistant with extensive knowledge.'),
+                'name': agent_or_dict.get('name', agent_or_dict.get('character_name', 'Agent')),
+                'allow_delegation': agent_or_dict.get('allow_delegation', False),
+                'verbose': True
+            }
+            
+            # Add any existing metadata
+            if 'metadata' in agent_or_dict and isinstance(agent_or_dict['metadata'], dict):
+                agent_data['metadata'] = agent_or_dict['metadata']
+            else:
+                agent_data['metadata'] = {}
+                
+            # Ensure ID is in the metadata
+            agent_data['metadata']['id'] = agent_id
+            
+            # Create a new Agent object
+            try:
+                agent = self._create_agent_from_data(agent_data)
+                if agent:
+                    logger.info(f"Successfully converted dictionary to Agent object: {agent}")
+                    return agent
+                else:
+                    raise ValueError("Agent creation from dictionary failed")
+            except Exception as e:
+                logger.error(f"Error creating Agent from dictionary: {e}")
+                raise ValueError(f"Could not convert dictionary to Agent: {e}")
+                
+        # If it's neither an Agent nor a dict, raise an error
+        else:
+            logger.error(f"Cannot convert {type(agent_or_dict)} to Agent object")
+            raise TypeError(f"Expected Agent or dict, got {type(agent_or_dict)}")
 
 def setup_socket_server(port=9876, max_attempts=5):
     """Set up a socket server to listen for requests

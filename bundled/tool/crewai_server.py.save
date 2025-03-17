@@ -1,0 +1,3945 @@
+^C
+^C
+^C
+^C
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+MightyDev CrewAI Server
+
+This module implements the CrewAI server for the MightyDev extension.
+It provides an interface to create, manage, and communicate with AI agents using CrewAI.
+"""
+
+import os
+import sys
+import json
+import uuid
+import time
+import socket
+import logging
+import threading
+import signal
+import atexit
+from pathlib import Path
+import re
+
+# Import environment variables
+try:
+    from . import env_vars
+except ImportError:
+    try:
+        import env_vars
+    except ImportError:
+        print("Could not import env_vars module")
+
+# Import the indexer module
+try:
+    from .mightydev.indexer import CodebaseIndexer
+except ImportError:
+    try:
+        from mightydev.indexer import CodebaseIndexer
+    except ImportError:
+        print("Could not import indexer module, codebase indexing will be disabled")
+
+# Check for different virtual environments
+venv_paths = [
+    # Custom crewai_venv for Python 3.13
+    os.path.abspath(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "crewai_venv", "lib", "python3.13", "site-packages"
+    )),
+    # Custom crewai_venv for Python 3.10
+    os.path.abspath(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "crewai_venv", "lib", "python3.10", "site-packages"
+    )),
+]
+
+# Add all existing venv paths to sys.path
+for venv_path in venv_paths:
+    if os.path.exists(venv_path):
+        if venv_path not in sys.path:
+            sys.path.insert(0, venv_path)
+        print(f"Added virtual environment site-packages to Python path: {venv_path}")
+
+# Import the adapter module first
+try:
+    from . import crewai_adapter
+except ImportError:
+    try:
+        import crewai_adapter
+    except ImportError:
+        print("Could not import crewai_adapter module")
+
+# Now try to import CrewAI through the adapter
+try:
+    from crewai import Agent, Task, Crew, Process, LLM
+    from crewai.agent import Agent
+    from crewai.crew import Crew
+    from crewai.task import Task
+except ImportError as e:
+    print(f"CrewAI import error: {e}")
+    print(f"Python path: {sys.path}")
+    print("CrewAI is not installed or not working properly")
+
+    # Try to use the adapter's classes directly if importing failed
+    try:
+        from crewai_adapter import Agent, Task, Crew, Process, LLM
+        print("Using CrewAI adapter classes")
+    except ImportError:
+        print("Error importing adapter classes. Please check your installation")
+        # Continue with partial functionality
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("crewai_server")
+
+class CrewAIServer:
+    """
+    CrewAI Server for MightyDev
+
+    Handles communication between the VSCode extension and the CrewAI library.
+    """
+
+    def __init__(self, project_path):
+        """
+        Initialize the CrewAI server
+
+        Args:
+            project_path (str): Path to the project root directory
+        """
+        self.project_path = project_path
+        self.tribe_path = os.path.join(project_path, ".tribe")
+        os.makedirs(self.tribe_path, exist_ok=True)
+
+        # Initialize agents and tasks
+        self.agents = {}
+        self.tasks = {}
+        
+        # Initialize progress tracking
+        self.progress_data = None
+        self.crews = {}
+        self.tools = {}  # tool_id -> tool object
+        self.agent_tools = {}  # agent_id -> list of tool_ids
+
+        # Initialize workload tracking
+        self.agent_workloads = {}  # agent_id -> workload metrics
+        self.agent_tasks = {}      # agent_id -> list of active tasks
+        self.task_status = {}      # task_id -> status information
+        self.conflict_history = {} # Tracks conflicts and resolutions
+        self.pending_approvals = {} # Human-in-the-loop approval requests
+
+        # Agent performance metrics
+        self.agent_performance = {} # agent_id -> performance metrics
+
+        # Initialize codebase indexer if available
+        self.codebase_indexer = None
+        try:
+            from mightydev.indexer import CodebaseIndexer
+            self.codebase_indexer = CodebaseIndexer(workspace_root=project_path)
+            logger.info(f"Initialized CodebaseIndexer for workspace: {project_path}")
+        except ImportError:
+            logger.warning("CodebaseIndexer not available - codebase indexing will be disabled")
+        except Exception as e:
+            logger.error(f"Error initializing CodebaseIndexer: {e}")
+
+        # Create default tools that will be available to all agents
+        self._create_default_tools()
+
+        # Load existing state if available
+        self._load_state()
+
+    def _create_default_tools(self):
+        """Create default tools that will be available to all agents"""
+        try:
+            # Import tools from crewai adapter
+            try:
+                from crewai_adapter import StructuredJSONOutputTool, ExtractJSONTool, Tool
+                logger.info("Using tools from crewai_adapter")
+            except ImportError:
+                # Import directly from crewai if adapter isn't available
+                try:
+                    from crewai import StructuredJSONOutputTool, ExtractJSONTool, Tool
+                    logger.info("Using tools directly from crewai")
+                except ImportError:
+                    logger.warning("Could not import tools - will create dummy tools")
+                    # Define a basic Tool class if imports fail
+                    class Tool:
+                        def __init__(self, name, description, func):
+                            self.name = name
+                            self.description = description
+                            self.func = func
+                        def __call__(self, *args, **kwargs):
+                            return self.func(*args, **kwargs)
+
+                    class StructuredJSONOutputTool:
+                        def __init__(self, schema):
+                            self.name = "structured_json_output"
+                            self.description = "Format output as JSON following schema"
+                            self.schema = schema
+                        def __call__(self, *args, **kwargs):
+                            return args[0] if args else kwargs.get("input", "")
+
+                    class ExtractJSONTool:
+                        def __init__(self):
+                            self.name = "extract_json"
+                            self.description = "Extract JSON from text"
+                        def __call__(self, *args, **kwargs):
+                            return args[0] if args else kwargs.get("input", "")
+
+            # 1. Create the Learning System Tool
+            def learning_system_tool(action, data=None):
+                """
+                Tool for interacting with the learning system
+
+                Args:
+                    action: The action to perform (store, retrieve, reflect)
+                    data: The data to store or query parameters
+
+                Returns:
+                    The result of the operation
+                """
+                return {
+                    "status": "success",
+                    "action": action,
+                    "message": f"Learning system tool called with action '{action}'",
+                    "data": data
+                }
+
+            learning_tool = Tool(
+                name="learning_system",
+                description="Access and update the agent's learning and memory system. Use for storing experiences, retrieving knowledge, and reflection.",
+                func=learning_system_tool
+            )
+            learning_tool_id = "learning_system"
+            self.tools[learning_tool_id] = learning_tool
+            logger.info(f"Created learning system tool with ID {learning_tool_id}")
+
+            # 2. Create the Project Management Tool
+            def project_management_tool(action, data=None):
+                """
+                Tool for interacting with the project management system
+
+                Args:
+                    action: The action to perform (create_task, update_task, etc.)
+                    data: The task data or query parameters
+
+                Returns:
+                    The result of the operation
+                """
+                return {
+                    "status": "success",
+                    "action": action,
+                    "message": f"Project management tool called with action '{action}'",
+                    "data": data
+                }
+
+            pm_tool = Tool(
+                name="project_management",
+                description="Manage tasks, assignments, and project structure. Use for creating tasks, updating status, and coordination.",
+                func=project_management_tool
+            )
+            pm_tool_id = "project_management"
+            self.tools[pm_tool_id] = pm_tool
+            logger.info(f"Created project management tool with ID {pm_tool_id}")
+
+            # 3. Create JSON formatting tools
+            generic_schema = {
+                "type": "object",
+                "properties": {
+                    "result": {"type": "string"},
+                    "status": {"type": "string"},
+                    "data": {"type": "object"}
+                }
+            }
+            json_output_tool = StructuredJSONOutputTool(schema=generic_schema)
+            json_output_tool_id = "json_output"
+            self.tools[json_output_tool_id] = json_output_tool
+
+            extract_json_tool = ExtractJSONTool()
+            extract_json_tool_id = "extract_json"
+            self.tools[extract_json_tool_id] = extract_json_tool
+
+            logger.info(f"Created JSON formatting tools with IDs {json_output_tool_id}, {extract_json_tool_id}")
+
+            # 4. Create Filesystem Tools
+            # Define workspace root for security
+            workspace_root = self.project_path
+
+            # Helper function to validate paths are within workspace
+            def validate_path(path):
+                """Validate a path is within the allowed workspace"""
+                # Convert to absolute path if not already
+                if not os.path.isabs(path):
+                    path = os.path.abspath(os.path.join(workspace_root, path))
+
+                # Check if path is within workspace boundary
+                try:
+                    # Use os.path.commonpath to check if the path is within workspace_root
+                    common = os.path.commonpath([workspace_root, path])
+                    if common != workspace_root:
+                        return None, {"status": "error", "message": f"Access denied: Path outside workspace boundary: {path}"}
+                    return path, None
+                except ValueError:
+                    # ValueError can be raised if paths are on different drives
+                    return None, {"status": "error", "message": f"Access denied: Invalid path comparison: {path}"}
+
+            # 4.1 File Read Tool
+            def fs_read(path, binary=False, encoding='utf-8', line_range=None, chunk_size=None):
+                """
+                Read a file from the filesystem with enhanced capabilities
+
+                Args:
+                    path: Path to the file to read
+                    binary: Whether to read in binary mode
+                    encoding: Text encoding to use (ignored in binary mode)
+                    line_range: Tuple of (start_line, end_line) for partial reading
+                    chunk_size: Size of chunk to read for large files
+
+                Returns:
+                    The file content or error message with metadata
+                """
+                validated_path, error = validate_path(path)
+                if error:
+                    return error
+
+                try:
+                    if not os.path.exists(validated_path):
+                        return {"status": "error", "message": f"File not found: {path}"}
+
+                    if os.path.isdir(validated_path):
+                        return {"status": "error", "message": f"Path is a directory, not a file: {path}"}
+
+                    # Check file size to prevent loading huge files
+                    file_size = os.path.getsize(validated_path)
+                    size_limit = 10 * 1024 * 1024  # 10MB limit
+                    
+                    # Function to check if file is binary
+                    def is_binary_file(file_path, sample_size=8000):
+                        """Check if a file is binary by examining a sample of its content."""
+                        try:
+                            with open(file_path, 'rb') as f:
+                                sample = f.read(sample_size)
+                            return b'\0' in sample or not all(c < 127 for c in sample if c > 31)
+                        except:
+                            return False
+                    
+                    # Detect if file is binary
+                    detected_binary = is_binary_file(validated_path)
+                    
+                    # Binary mode reading
+                    if binary:
+                        # For binary files, don't apply the same size limit if chunking
+                        binary_size_limit = 50 * 1024 * 1024  # 50MB for binary
+                        if file_size > binary_size_limit and not chunk_size:
+                            return {
+                                "status": "error",
+                                "message": f"Binary file too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {binary_size_limit / 1024 / 1024:.2f}MB limit). Use chunk_size parameter."
+                            }
+                            
+                        with open(validated_path, 'rb') as file:
+                            if chunk_size and chunk_size > 0:
+                                content = file.read(chunk_size)
+                                return {
+                                    "status": "success",
+                                    "message": f"Successfully read binary file (chunk): {path}",
+                                    "content_hex": content.hex(),
+                                    "format": "hex",
+                                    "file_size": file_size,
+                                    "chunk_size": len(content),
+                                    "has_more": file_size > chunk_size,
+                                    "is_binary": True,
+                                    "path": validated_path
+                                }
+                            else:
+                                content = file.read()
+                                return {
+                                    "status": "success",
+                                    "message": f"Successfully read binary file: {path}",
+                                    "content_hex": content.hex(),
+                                    "format": "hex",
+                                    "file_size": file_size,
+                                    "is_binary": True,
+                                    "path": validated_path
+                                }
+                    
+                    # Detected binary but not requested in binary mode
+                    elif detected_binary and not binary:
+                        return {
+                            "status": "warning",
+                            "message": f"File appears to be binary. Use binary=True parameter to read properly.",
+                            "path": validated_path,
+                            "is_binary": True,
+                            "file_size": file_size
+                        }
+                    
+                    # Text mode with line range
+                    elif line_range and isinstance(line_range, (list, tuple)) and len(line_range) == 2:
+                        if file_size > size_limit:
+                            return {
+                                "status": "error",
+                                "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
+                            }
+                            
+                        start_line, end_line = line_range
+                        with open(validated_path, 'r', encoding=encoding, errors='replace') as file:
+                            lines = file.readlines()
+                            if start_line < 0:
+                                start_line = 0
+                            if end_line < 0 or end_line > len(lines):
+                                end_line = len(lines)
+                            selected_lines = lines[start_line:end_line]
+                            content = "".join(selected_lines)
+                            
+                            return {
+                                "status": "success",
+                                "message": f"Successfully read file (lines {start_line+1}-{end_line}): {path}",
+                                "content": content,
+                                "start_line": start_line + 1,  # 1-based line numbers for display
+                                "end_line": end_line,
+                                "total_lines": len(lines),
+                                "encoding": encoding,
+                                "is_binary": False,
+                                "path": validated_path
+                            }
+                    
+                    # Regular text mode reading
+                    else:
+                        if file_size > size_limit:
+                            return {
+                                "status": "error",
+                                "message": f"File too large to read: {path} ({file_size / 1024 / 1024:.2f}MB > {size_limit / 1024 / 1024:.2f}MB limit)"
+                            }
+                            
+                        # Read file with proper encoding detection
+                        with open(validated_path, 'r', encoding=encoding, errors='replace') as f:
+                            content = f.read()
+
+                        return {
+                            "status": "success",
+                            "message": f"Successfully read file: {path}",
+                            "content": content,
+                            "size": file_size,
+                            "encoding": encoding,
+                            "is_binary": False,
+                            "path": validated_path
+                        }
+                except Exception as e:
+                    logger.error(f"Error reading file: {e}")
+                    return {"status": "error", "message": f"Error reading file: {str(e)}"}
+
+            fs_read_tool = Tool(
+                name="fs_read",
+                description="Read a file from the filesystem with enhanced capabilities including binary mode, encoding options, line ranges, and chunking. Parameters: path, binary=False, encoding='utf-8', line_range=None, chunk_size=None.",
+                func=fs_read
+            )
+            self.tools["fs_read"] = fs_read_tool
+
+            # 4.2 File Write Tool
+            def fs_write(path, content, mode="overwrite"):
+                """
+                Write content to a file
+
+                Args:
+                    path: Path to the file to write
+                    content: Content to write to the file
+                    mode: 'overwrite' to replace the file or 'append' to add to it
+
+                Returns:
+                    Success status or error message
+                """
+                validated_path, error = validate_path(path)
+                if error:
+                    return error
+
+                try:
+                    # Create directory if it doesn't exist
+                    directory = os.path.dirname(validated_path)
+                    if not os.path.exists(directory):
+                        os.makedirs(directory, exist_ok=True)
+
+                    # Write mode based on parameter
+                    write_mode = 'w' if mode == 'overwrite' else 'a'
+
+                    with open(validated_path, write_mode, encoding='utf-8') as f:
+                        f.write(content)
+
+                    file_size = os.path.getsize(validated_path)
+
+                    return {
+                        "status": "success",
+                        "message": f"Successfully wrote to file: {path}",
+                        "path": validated_path,
+                        "size": file_size,
+                        "mode": mode
+                    }
+                except Exception as e:
+                    logger.error(f"Error writing file: {e}")
+                    return {"status": "error", "message": f"Error writing file: {str(e)}"}
+
+            fs_write_tool = Tool(
+                name="fs_write",
+                description="Write content to a file. If the file already exists, it will be overwritten by default, or appended to if mode='append'.",
+                func=fs_write
+            )
+            self.tools["fs_write"] = fs_write_tool
+
+            # 4.3 File Update Tool
+            def fs_update(path, old_content, new_content):
+                """
+                Update a portion of a file by replacing specific content
+
+                Args:
+                    path: Path to the file to update
+                    old_content: Content to replace
+                    new_content: New content to insert
+
+                Returns:
+                    Success status or error message
+                """
+                validated_path, error = validate_path(path)
+                if error:
+                    return error
+
+                try:
+                    if not os.path.exists(validated_path):
+                        return {"status": "error", "message": f"File not found: {path}"}
+
+                    # Read current content
+                    with open(validated_path, 'r', encoding='utf-8', errors='replace') as f:
+                        content = f.read()
+
+                    # Check if old_content exists in the file
+                    if old_content not in content:
+                        return {
+                            "status": "error",
+                            "message": f"Content to replace not found in file: {path}"
+                        }
+
+                    # Replace content
+                    updated_content = content.replace(old_content, new_content)
+
+                    # Write updated content
+                    with open(validated_path, 'w', encoding='utf-8') as f:
+                        f.write(updated_content)
+
+                    file_size = os.path.getsize(validated_path)
+
+                    return {
+                        "status": "success",
+                        "message": f"Successfully updated file: {path}",
+                        "path": validated_path,
+                        "size": file_size,
+                        "replacements": content.count(old_content)
+                    }
+                except Exception as e:
+                    logger.error(f"Error updating file: {e}")
+                    return {"status": "error", "message": f"Error updating file: {str(e)}"}
+
+            fs_update_tool = Tool(
+                name="fs_update",
+                description="Update a file by replacing specific content with new content. Useful for making targeted changes to files.",
+                func=fs_update
+            )
+            self.tools["fs_update"] = fs_update_tool
+
+            # 4.4 File List Tool
+            def fs_list(path="."):
+                """
+                List contents of a directory
+
+                Args:
+                    path: Path to the directory to list
+
+                Returns:
+                    List of files and directories
+                """
+                validated_path, error = validate_path(path)
+                if error:
+                    return error
+
+                try:
+                    if not os.path.exists(validated_path):
+                        return {"status": "error", "message": f"Directory not found: {path}"}
+
+                    if not os.path.isdir(validated_path):
+                        return {"status": "error", "message": f"Path is not a directory: {path}"}
+
+                    # Get directory contents
+                    contents = os.listdir(validated_path)
+
+                    # Separate files and directories
+                    files = []
+                    directories = []
+
+                    for item in contents:
+                        item_path = os.path.join(validated_path, item)
+                        if os.path.isdir(item_path):
+                            directories.append({
+                                "name": item,
+                                "type": "directory",
+                                "path": os.path.relpath(item_path, workspace_root)
+                            })
+                        else:
+                            try:
+                                size = os.path.getsize(item_path)
+                                mod_time = os.path.getmtime(item_path)
+                                files.append({
+                                    "name": item,
+                                    "type": "file",
+                                    "path": os.path.relpath(item_path, workspace_root),
+                                    "size": size,
+                                    "modified": mod_time
+                                })
+                            except Exception as e:
+                                # Skip files with permission issues
+                                logger.warning(f"Error accessing file {item_path}: {e}")
+
+                    return {
+                        "status": "success",
+                        "message": f"Successfully listed directory: {path}",
+                        "path": validated_path,
+                        "relative_path": os.path.relpath(validated_path, workspace_root),
+                        "directories": directories,
+                        "files": files,
+                        "total_items": len(contents)
+                    }
+                except Exception as e:
+                    logger.error(f"Error listing directory: {e}")
+                    return {"status": "error", "message": f"Error listing directory: {str(e)}"}
+
+            fs_list_tool = Tool(
+                name="fs_list",
+                description="List contents of a directory. Returns files and directories with metadata.",
+                func=fs_list
+            )
+            self.tools["fs_list"] = fs_list_tool
+
+            # 4.5 File Search Tool
+            def fs_search(query, path=".", file_pattern="*", max_results=100, regex_flags=0, binary=False, max_file_size=None, recursive=True):
+                """
+                Search for files or content in files with enhanced regex capabilities
+
+                Args:
+                    query: Text or regular expression pattern to search for
+                    path: Directory to search in
+                    file_pattern: Glob pattern to filter files
+                    max_results: Maximum number of results to return
+                    regex_flags: Flags for regex (0=none, 2=IGNORECASE, 8=MULTILINE, etc. - add values for multiple flags)
+                    binary: Whether to search in binary files
+                    max_file_size: Maximum file size to search in bytes (default 2MB)
+                    recursive: Whether to search recursively in subdirectories
+
+                Returns:
+                    Matching files and content with detailed metadata
+                """
+                validated_path, error = validate_path(path)
+                if error:
+                    return error
+
+                try:
+                    import fnmatch
+                    import re
+
+                    if not os.path.exists(validated_path):
+                        return {"status": "error", "message": f"Directory not found: {path}"}
+
+                    if not os.path.isdir(validated_path):
+                        return {"status": "error", "message": f"Path is not a directory: {path}"}
+
+                    # Compile regex pattern for better performance
+                    try:
+                        pattern = re.compile(query, re.IGNORECASE)
+                        is_regex = True
+                    except re.error:
+                        # If invalid regex, treat as plain text
+                        is_regex = False
+
+                    results = []
+                    result_count = 0
+
+                    # Helper function to search in file
+                    def search_in_file(file_path):
+                        nonlocal result_count
+                        if result_count >= max_results:
+                            return
+
+                        # Skip files larger than limit
+                        size_limit = max_file_size or 2 * 1024 * 1024  # Default to 2MB if not specified
+                        if os.path.getsize(file_path) > size_limit:
+                            return
+                            
+                        # Function to check if file is binary
+                        def is_binary_file(file_path, sample_size=8000):
+                            """Check if a file is binary by examining a sample of its content."""
+                            try:
+                                with open(file_path, 'rb') as f:
+                                    sample = f.read(sample_size)
+                                return b'\0' in sample or not all(c < 127 for c in sample if c > 31)
+                            except:
+                                return False
+                                
+                        # Check if file is binary
+                        is_file_binary = is_binary_file(file_path)
+                        
+                        # Handle binary search if requested
+                        if binary and is_file_binary:
+                            try:
+                                with open(file_path, 'rb') as f:
+                                    binary_content = f.read()
+                                
+                                # Convert query to bytes if it's a string
+                                query_bytes = query.encode('utf-8') if isinstance(query, str) else query
+                                
+                                # Simple binary search (no regex in binary mode)
+                                matches = []
+                                start = 0
+                                while start < len(binary_content):
+                                    pos = binary_content.find(query_bytes, start)
+                                    if pos == -1:
+                                        break
+                                        
+                                    # Get some context bytes before and after
+                                    context_start = max(0, pos - 20)
+                                    context_end = min(len(binary_content), pos + len(query_bytes) + 20)
+                                    context_bytes = binary_content[context_start:context_end]
+                                    
+                                    matches.append({
+                                        "position": pos,
+                                        "context_hex": context_bytes.hex(),
+                                        "match_hex": binary_content[pos:pos+len(query_bytes)].hex()
+                                    })
+                                    
+                                    if len(matches) >= 10:  # Limit matches per binary file
+                                        break
+                                        
+                                    start = pos + len(query_bytes)
+                                    
+                                if matches:
+                                    result_count += 1
+                                    results.append({
+                                        "file": os.path.relpath(file_path, validated_path),
+                                        "path": file_path,
+                                        "is_binary": True,
+                                        "size": os.path.getsize(file_path),
+                                        "matches": matches,
+                                        "match_count": len(matches)
+                                    })
+                            except Exception as e:
+                                logger.warning(f"Error searching in binary file {file_path}: {e}")
+                            return
+                        
+                        # Skip binary files in text mode unless binary search is enabled
+                        if is_file_binary and not binary:
+                            return
+                            
+                        try:
+                            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                                content = f.read()
+
+                            matches = []
+                            # Handle regex search with specified flags
+                            if regex_flags > 0:
+                                # Create pattern with specified flags
+                                try:
+                                    pattern = re.compile(query, regex_flags)
+                                    for match in pattern.finditer(content):
+                                        start_idx = max(0, match.start() - 50)
+                                        end_idx = min(len(content), match.end() + 50)
+
+                                        # Find line and column
+                                        line_number = content.count('\n', 0, match.start()) + 1
+                                        line_start = content.rfind('\n', 0, match.start()) + 1
+                                        column = match.start() - line_start + 1
+                                        
+                                        # Get the whole line
+                                        line_end = content.find('\n', match.start())
+                                        if line_end == -1:
+                                            line_end = len(content)
+                                        line_content = content[line_start:line_end]
+
+                                        # Extract context
+                                        context = content[start_idx:end_idx]
+                                        
+                                        # Get match groups
+                                        groups = match.groups()
+                                        named_groups = match.groupdict() if hasattr(match, 'groupdict') else {}
+
+                                        matches.append({
+                                            "text": match.group(0),
+                                            "line": line_number,
+                                            "column": column,
+                                            "line_content": line_content,
+                                            "context": context,
+                                            "start": match.start(),
+                                            "end": match.end(),
+                                            "groups": groups,
+                                            "named_groups": named_groups
+                                        })
+                                        
+                                        if len(matches) >= max_results:
+                                            break
+                                except re.error as e:
+                                    # Fall back to standard search on regex error
+                                    logger.warning(f"Invalid regex pattern: {e}. Falling back to standard search.")
+                                    is_regex = False
+                            # Standard regex search without additional flags
+                            elif is_regex:
+                                for match in pattern.finditer(content):
+                                    start_idx = max(0, match.start() - 50)
+                                    end_idx = min(len(content), match.end() + 50)
+
+                                    # Find line numbers
+                                    line_number = content.count('\n', 0, match.start()) + 1
+                                    line_start = content.rfind('\n', 0, match.start()) + 1
+                                    column = match.start() - line_start + 1
+                                    
+                                    # Get the whole line
+                                    line_end = content.find('\n', match.start())
+                                    if line_end == -1:
+                                        line_end = len(content)
+                                    line_content = content[line_start:line_end]
+
+                                    # Extract context
+                                    context = content[start_idx:end_idx]
+
+                                    matches.append({
+                                        "text": match.group(),
+                                        "line": line_number,
+                                        "column": column,
+                                        "line_content": line_content,
+                                        "context": context,
+                                        "start": match.start(),
+                                        "end": match.end()
+                                    })
+                                    
+                                    if len(matches) >= max_results:
+                                        break
+                            else:
+                                # Plain text search
+                                start = 0
+                                query_lower = query.lower()
+                                content_lower = content.lower()
+
+                                while start < len(content_lower):
+                                    pos = content_lower.find(query_lower, start)
+                                    if pos == -1:
+                                        break
+
+                                    # Find line and column
+                                    line_number = content.count('\n', 0, pos) + 1
+                                    line_start = content.rfind('\n', 0, pos) + 1
+                                    column = pos - line_start + 1
+                                    
+                                    # Get the whole line
+                                    line_end = content.find('\n', pos)
+                                    if line_end == -1:
+                                        line_end = len(content)
+                                    line_content = content[line_start:line_end]
+
+                                    # Extract context
+                                    start_idx = max(0, pos - 50)
+                                    end_idx = min(len(content), pos + len(query) + 50)
+                                    context = content[start_idx:end_idx]
+
+                                    matches.append({
+                                        "text": content[pos:pos + len(query)],
+                                        "line": line_number,
+                                        "column": column,
+                                        "line_content": line_content,
+                                        "context": context,
+                                        "start": pos,
+                                        "end": pos + len(query)
+                                    })
+
+                                    start = pos + len(query)
+                                    
+                                    if len(matches) >= max_results:
+                                        break
+
+                            if matches:
+                                results.append({
+                                    "file": os.path.relpath(file_path, workspace_root),
+                                    "matches": matches[:10],  # Limit matches per file
+                                    "total_matches": len(matches)
+                                })
+                                result_count += 1
+                        except Exception as e:
+                            logger.warning(f"Error searching in file {file_path}: {e}")
+
+                    # Walk directory tree
+                    for root, dirs, files in os.walk(validated_path):
+                        # Skip hidden directories
+                        dirs[:] = [d for d in dirs if not d.startswith('.')]
+
+                        for file in files:
+                            if result_count >= max_results:
+                                break
+
+                            # Skip hidden files
+                            if file.startswith('.'):
+                                continue
+
+                            # Apply file pattern
+                            if not fnmatch.fnmatch(file, file_pattern):
+                                continue
+
+                            file_path = os.path.join(root, file)
+                            search_in_file(file_path)
+
+                    return {
+                        "status": "success",
+                        "message": f"Found {result_count} files with matches for '{query}'",
+                        "query": query,
+                        "is_regex": is_regex,
+                        "path": validated_path,
+                        "relative_path": os.path.relpath(validated_path, workspace_root),
+                        "results": results,
+                        "total_results": result_count,
+                        "max_results_reached": result_count >= max_results
+                    }
+                except Exception as e:
+                    logger.error(f"Error searching files: {e}")
+                    return {"status": "error", "message": f"Error searching files: {str(e)}"}
+
+            fs_search_tool = Tool(
+                name="fs_search",
+                description="Search for files or content in files with advanced regex capabilities, binary search, and detailed results. Parameters: query, path, file_pattern, max_results, regex_flags, binary, max_file_size, recursive.",
+                func=fs_search
+            )
+            self.tools["fs_search"] = fs_search_tool
+
+            # 4.6 File Delete Tool
+            def fs_delete(path, recursive=False):
+                """
+                Delete a file or directory
+
+                Args:
+                    path: Path to the file or directory to delete
+                    recursive: Whether to recursively delete directories
+
+                Returns:
+                    Success status or error message
+                """
+                validated_path, error = validate_path(path)
+                if error:
+                    return error
+
+                try:
+                    if not os.path.exists(validated_path):
+                        return {"status": "error", "message": f"Path not found: {path}"}
+
+                    is_dir = os.path.isdir(validated_path)
+
+                    # Block deletion of project root
+                    if validated_path == workspace_root:
+                        return {"status": "error", "message": "Cannot delete project root directory"}
+
+                    # Handle directory deletion
+                    if is_dir:
+                        if not recursive:
+                            # Check if directory is empty
+                            if os.listdir(validated_path):
+                                return {
+                                    "status": "error",
+                                    "message": f"Directory not empty: {path}. Use recursive=True to force deletion."
+                                }
+                            os.rmdir(validated_path)
+                        else:
+                            import shutil
+                            shutil.rmtree(validated_path)
+                    else:
+                        # Handle file deletion
+                        os.remove(validated_path)
+
+                    return {
+                        "status": "success",
+                        "message": f"Successfully deleted {'directory' if is_dir else 'file'}: {path}",
+                        "path": validated_path,
+                        "type": "directory" if is_dir else "file",
+                        "recursive": recursive if is_dir else None
+                    }
+                except Exception as e:
+                    logger.error(f"Error deleting path: {e}")
+                    return {"status": "error", "message": f"Error deleting path: {str(e)}"}
+
+            fs_delete_tool = Tool(
+                name="fs_delete",
+                description="Delete a file or directory. Use recursive=True to delete non-empty directories.",
+                func=fs_delete
+            )
+            self.tools["fs_delete"] = fs_delete_tool
+
+            logger.info(f"Created filesystem tools: fs_read, fs_write, fs_update, fs_list, fs_search, fs_delete")
+
+            # Create Shell Execution Tool
+            try:
+                # Import ShellExecutionTool
+                from crewai_adapter import ShellExecutionTool
+
+                # Create and register the tool
+                shell_tool = ShellExecutionTool()
+                shell_tool_id = "shell_execute"
+                self.tools[shell_tool_id] = shell_tool
+                logger.info(f"Created shell execution tool with ID {shell_tool_id}")
+            except ImportError:
+                logger.warning("Could not import ShellExecutionTool from crewai_adapter")
+
+            # Create Code Diff Tool
+            try:
+                # Define code diff tool function
+                def code_diff(original_code, modified_code, file_path=None):
+                    """
+                    Generate a diff between original and modified code
+
+                    Args:
+                        original_code: Original code content
+                        modified_code: Modified code content
+                        file_path: Optional path to associate with the diff
+
+                    Returns:
+                        Dictionary with diff information
+                    """
+                    try:
+                        import difflib
+
+                        # Generate unified diff
+                        diff_lines = list(difflib.unified_diff(
+                            original_code.splitlines(),
+                            modified_code.splitlines(),
+                            fromfile="original" if not file_path else f"a/{file_path}",
+                            tofile="modified" if not file_path else f"b/{file_path}",
+                            lineterm="",
+                            n=3  # Context lines
+                        ))
+
+                        diff_text = "\n".join(diff_lines)
+
+                        return {
+                            "status": "success",
+                            "diff": diff_text,
+                            "file_path": file_path,
+                            "has_changes": bool(diff_lines)
+                        }
+                    except Exception as e:
+                        return {
+                            "status": "error",
+                            "message": f"Error generating diff: {str(e)}"
+                        }
+
+                # Create and register the tool
+                from crewai import Tool
+                diff_tool = Tool(
+                    name="code_diff",
+                    description="Generate a diff between original and modified code to show changes",
+                    func=code_diff
+                )
+                diff_tool_id = "code_diff"
+                self.tools[diff_tool_id] = diff_tool
+                logger.info(f"Created code diff tool with ID {diff_tool_id}")
+            except Exception as e:
+                logger.warning(f"Could not create code diff tool: {e}")
+
+            # Define default tools that will be assigned to all new agents
+            default_tools = [
+                "learning_system",
+                "project_management",
+                "json_output",
+                "extract_json",
+                "fs_read",
+                "fs_write",
+                "fs_update",
+                "fs_list",
+                "fs_search",
+                "fs_delete",
+                "shell_execute",  # Shell execution tool
+                "code_diff"       # Code diff tool
+            ]
+            self.default_tools = default_tools
+            logger.info(f"Created default tools list with {len(default_tools)} tools: {', '.join(default_tools)}")
+
+            # Save the tool state
+            self._save_tool_state()
+
+        except Exception as e:
+            logger.error(f"Error creating default tools: {e}")
+
+    def _save_tool_state(self):
+        """Save the current tool state to the .tribe directory"""
+        try:
+            # Create tools directory if it doesn't exist
+            tools_dir = os.path.join(self.tribe_path, "tools")
+            os.makedirs(tools_dir, exist_ok=True)
+
+            # Save tools data
+            tools_data = []
+            for tool_id, tool in self.tools.items():
+                tool_data = {
+                    "id": tool_id,
+                    "name": getattr(tool, "name", tool_id),
+                    "description": getattr(tool, "description", ""),
+                    "type": tool.__class__.__name__
+                }
+
+                # Add schema if it's a StructuredJSONOutputTool
+                if hasattr(tool, "schema"):
+                    tool_data["schema"] = tool.schema
+
+                tools_data.append(tool_data)
+
+            tools_path = os.path.join(tools_dir, "tools.json")
+            with open(tools_path, "w") as f:
+                json.dump(tools_data, f, indent=2)
+
+            # Save agent-tool relationships
+            agent_tools_path = os.path.join(tools_dir, "agent_tools.json")
+            with open(agent_tools_path, "w") as f:
+                json.dump(self.agent_tools, f, indent=2)
+
+            logger.info(f"Saved {len(tools_data)} tools to {tools_path}")
+
+        except Exception as e:
+            logger.error(f"Error saving tool state: {e}")
+
+    def _load_state(self):
+        """Load existing agents, tasks, and crews from the .tribe directory"""
+        try:
+            # Load tools first
+            tools_dir = os.path.join(self.tribe_path, "tools")
+            tools_path = os.path.join(tools_dir, "tools.json")
+            if os.path.exists(tools_path):
+                with open(tools_path, "r") as f:
+                    tools_data = json.load(f)
+                    for tool_data in tools_data:
+                        tool_id = tool_data.get("id")
+                        # Skip if tool already exists
+                        if tool_id in self.tools:
+                            continue
+                        # Try to recreate the tool
+                        tool = self._create_tool_from_data(tool_data)
+                        if tool:
+                            self.tools[tool_id] = tool
+
+            # Load agent-tool relationships
+            agent_tools_path = os.path.join(tools_dir, "agent_tools.json")
+            if os.path.exists(agent_tools_path):
+                with open(agent_tools_path, "r") as f:
+                    self.agent_tools = json.load(f)
+
+            # Load agents
+            agents_path = os.path.join(self.tribe_path, "agents.json")
+            if os.path.exists(agents_path):
+                with open(agents_path, "r") as f:
+                    agents_data = json.load(f)
+                    for agent_data in agents_data:
+                        # Convert to CrewAI Agent objects
+                        agent = self._create_agent_from_data(agent_data)
+                        if agent and agent_data.get("id") in self.agent_tools:
+                            # Attach tools to the agent
+                            self._attach_tools_to_agent(agent, self.agent_tools[agent_data.get("id")])
+
+            # Load tasks
+            tasks_path = os.path.join(self.tribe_path, "tasks.json")
+            if os.path.exists(tasks_path):
+                with open(tasks_path, "r") as f:
+                    tasks_data = json.load(f)
+                    for task_data in tasks_data:
+                        # Convert to CrewAI Task objects
+                        self._create_task_from_data(task_data)
+
+            # Load agent workloads
+            workloads_path = os.path.join(self.tribe_path, "workloads.json")
+            if os.path.exists(workloads_path):
+                with open(workloads_path, "r") as f:
+                    self.agent_workloads = json.load(f)
+                    logger.info(f"Loaded workload data for {len(self.agent_workloads)} agents")
+
+            # Load task status
+            task_status_path = os.path.join(self.tribe_path, "task_status.json")
+            if os.path.exists(task_status_path):
+                with open(task_status_path, "r") as f:
+                    self.task_status = json.load(f)
+                    logger.info(f"Loaded status data for {len(self.task_status)} tasks")
+
+            # Load performance metrics
+            performance_path = os.path.join(self.tribe_path, "agent_performance.json")
+            if os.path.exists(performance_path):
+                with open(performance_path, "r") as f:
+                    self.agent_performance = json.load(f)
+                    logger.info(f"Loaded performance data for {len(self.agent_performance)} agents")
+
+            # Load conflict history
+            conflicts_path = os.path.join(self.tribe_path, "conflicts.json")
+            if os.path.exists(conflicts_path):
+                with open(conflicts_path, "r") as f:
+                    self.conflict_history = json.load(f)
+                    logger.info(f"Loaded conflict history with {len(self.conflict_history)} entries")
+
+            # Initialize agent tasks based on task status
+            self.agent_tasks = {}
+            for task_id, status in self.task_status.items():
+                if status.get("status") == "in_progress" and status.get("assigned_to"):
+                    agent_id = status["assigned_to"]
+                    if agent_id not in self.agent_tasks:
+                        self.agent_tasks[agent_id] = []
+                    self.agent_tasks[agent_id].append(task_id)
+
+            logger.info("Completed loading persistent state")
+
+        except Exception as e:
+            logger.error(f"Error loading state: {e}")
+
+    def _save_state(self):
+        """Save current agents, tasks, and crews to the .tribe directory"""
+        try:
+            # Save agents
+            agents_data = []
+            for agent_id, agent in self.agents.items():
+                # Convert CrewAI Agent objects to serializable data
+                agent_data = {
+                    "id": agent_id,
+                    "name": agent.name,
+                    "role": agent.role,
+                    "goal": agent.goal,
+                    "backstory": agent.backstory,
+                    # Add other attributes as needed
+                }
+                agents_data.append(agent_data)
+
+            agents_path = os.path.join(self.tribe_path, "agents.json")
+            with open(agents_path, "w") as f:
+                json.dump(agents_data, f, indent=2)
+
+            # Save tasks
+            tasks_data = []
+            for task_id, task in self.tasks.items():
+                # Convert CrewAI Task objects to serializable data
+                task_data = {
+                    "id": task_id,
+                    "description": task.description,
+                    "agent_id": task.agent.name if task.agent else None,
+                    # Add other attributes as needed
+                }
+                tasks_data.append(task_data)
+
+            tasks_path = os.path.join(self.tribe_path, "tasks.json")
+            with open(tasks_path, "w") as f:
+                json.dump(tasks_data, f, indent=2)
+
+            # Save agent workloads
+            workloads_path = os.path.join(self.tribe_path, "workloads.json")
+            with open(workloads_path, "w") as f:
+                json.dump(self.agent_workloads, f, indent=2)
+
+            # Save task status
+            task_status_path = os.path.join(self.tribe_path, "task_status.json")
+            with open(task_status_path, "w") as f:
+                # Convert any non-serializable objects to strings
+                serializable_task_status = {}
+                for task_id, status in self.task_status.items():
+                    serializable_task_status[task_id] = {
+                        k: str(v) if not isinstance(v, (str, int, float, bool, list, dict, type(None))) else v
+                        for k, v in status.items()
+                    }
+                json.dump(serializable_task_status, f, indent=2)
+
+            # Save performance metrics
+            performance_path = os.path.join(self.tribe_path, "agent_performance.json")
+            with open(performance_path, "w") as f:
+                json.dump(self.agent_performance, f, indent=2)
+
+            # Save conflict history
+            conflicts_path = os.path.join(self.tribe_path, "conflicts.json")
+            with open(conflicts_path, "w") as f:
+                json.dump(self.conflict_history, f, indent=2)
+
+        except Exception as e:
+            logger.error(f"Error saving state: {e}")
+
+    def _create_tool_from_data(self, tool_data):
+        """
+        Create a CrewAI Tool from the provided data using dictionary approach
+        
+        Args:
+            tool_data (dict): Tool data
+            
+        Returns:
+            Tool: CrewAI Tool object
+        """
+        try:
+            tool_id = tool_data.get("id", f"tool-{uuid.uuid4()}")
+            tool_name = tool_data.get("name", "Generic Tool")
+            tool_description = tool_data.get("description", "A generic tool")
+            tool_type = tool_data.get("type", "generic")
+            
+            # Handle different tool types using the dictionary approach
+            if tool_type == "learning_system":
+                # Create a learning system tool
+                def learning_func(action, data=None):
+                    try:
+                        if not self._learning_system:
+                            return "Learning system is not available"
+                            
+                        return self._learning_system.handle_action(action, data)
+                    except Exception as e:
+                        logger.error(f"Error in learning system tool: {e}")
+                        return f"Error in learning system tool: {str(e)}"
+                
+                # Create tool using dictionary
+                tool_dict = {
+                    "name": tool_name or "learning_system",
+                    "description": tool_description or "Access the learning system to store and retrieve knowledge",
+                    "func": learning_func
+                }
+                
+                tool = Tool(**tool_dict)
+                
+            elif tool_type == "project_management":
+                # Create a project management tool
+                def pm_func(action, data=None):
+                    try:
+                        # For now, just a placeholder
+                        if action == "list_tasks":
+                            return {"tasks": list(self.tasks.keys())}
+                        elif action == "list_agents":
+                            return {"agents": list(self.agents.keys())}
+                        elif action == "get_project_status":
+                            return {"status": "active", "tasks": len(self.tasks), "agents": len(self.agents)}
+                        else:
+                            return f"Unknown action: {action}"
+                    except Exception as e:
+                        logger.error(f"Error in project management tool: {e}")
+                        return f"Error in project management tool: {str(e)}"
+                
+                # Create tool using dictionary
+                tool_dict = {
+                    "name": tool_name or "project_management",
+                    "description": tool_description or "Manage project tasks, agents, and track status",
+                    "func": pm_func
+                }
+                
+                tool = Tool(**tool_dict)
+                
+            elif tool_type == "structured_json":
+                # Create a structured JSON output tool
+                schema = tool_data.get("schema", {})
+                
+                # Create tool using dictionary with schema
+                tool_dict = {
+                    "schema": schema
+                }
+                
+                tool = StructuredJSONOutputTool(**tool_dict)
+                
+            elif tool_type == "extract_json":
+                # Create an extract JSON tool
+                tool = ExtractJSONTool()
+                
+            elif tool_type == "shell_execute":
+                # Create a shell execution tool
+                tool = ShellExecutionTool()
+                
+            else:
+                # Create a generic tool
+                def generic_func(input_str):
+                    try:
+                        # For now, just echo the input
+                        return f"Processed: {input_str}"
+                    except Exception as e:
+                        logger.error(f"Error in generic tool: {e}")
+                        return f"Error in generic tool: {str(e)}"
+                
+                # Create tool using dictionary
+                tool_dict = {
+                    "name": tool_name,
+                    "description": tool_description,
+                    "func": tool_data.get("func", generic_func)
+                }
+                
+                tool = Tool(**tool_dict)
+            
+            # Store the tool
+            self.tools[tool_id] = tool
+            return tool
+            
+        except Exception as e:
+            logger.error(f"Error creating tool: {e}")
+            return None
+
+    def _attach_tools_to_agent(self, agent, tool_ids):
+        """
+        Attach tools to an agent
+
+        Args:
+            agent: The agent to attach tools to
+            tool_ids (list): List of tool IDs
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not hasattr(agent, 'tools'):
+                # Some versions of CrewAI don't have tools attribute
+                # Create it dynamically
+                setattr(agent, 'tools', [])
+
+            # Make a copy to avoid modifying the original list
+            tool_ids_to_use = list(tool_ids)
+
+            # Add default tools if not already included and we have default tools defined
+            if hasattr(self, 'default_tools'):
+                for tool_id in self.default_tools:
+                    if tool_id not in tool_ids_to_use and tool_id in self.tools:
+                        tool_ids_to_use.append(tool_id)
+                        logger.info(f"Added default tool {tool_id} to agent {agent.name}")
+
+            # Get the tools based on tool IDs
+            tools_to_attach = []
+            for tool_id in tool_ids_to_use:
+                if tool_id in self.tools:
+                    # IMPORTANT: Wrap our custom tools in CrewAI-compatible tools if possible
+                    raw_tool = self.tools[tool_id]
+                    # Check if we have the converter function available through crewai module
+                    if hasattr(crewai, "_convert_to_crewai_tool"):
+                        try:
+                            # Use the converter function
+                            converted_tool = crewai._convert_to_crewai_tool(raw_tool)
+                            tools_to_attach.append(converted_tool)
+                            logger.info(f"Added wrapped tool {tool_id} to agent {agent.name}")
+                        except Exception as convert_err:
+                            logger.error(f"Error converting tool {tool_id}: {convert_err}")
+                            # Fall back to using the raw tool
+                            tools_to_attach.append(raw_tool)
+                            logger.warning(f"Added raw tool {tool_id} to agent {agent.name} (could not convert)")
+                    else:
+                        # No converter available, use raw tool
+                        tools_to_attach.append(raw_tool)
+                        logger.info(f"Added tool {tool_id} to agent {agent.name} (no converter available)")
+                else:
+                    logger.warning(f"Tool {tool_id} not found in available tools")
+
+            # Set the tools on the agent
+            agent.tools = tools_to_attach
+
+            # Log which tools were added
+            tool_names = [getattr(t, 'name', str(t)) for t in tools_to_attach]
+            logger.info(f"Agent {agent.name} tools: {', '.join(tool_names)}")
+
+            # Store the relationship in our mapping
+            agent_id = getattr(agent, 'id', None) or getattr(agent, 'name', None)
+            if agent_id:
+                self.agent_tools[agent_id] = tool_ids_to_use
+
+            logger.info(f"Attached {len(tools_to_attach)} tools to agent {agent.name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error attaching tools to agent: {e}")
+            return False
+
+    def _create_agent_from_data(self, agent_data):
+        """
+        Create a CrewAI Agent from the provided data using dictionary approach
+
+        Args:
+            agent_data (dict): Agent data
+
+        Returns:
+            Agent: CrewAI Agent object
+        """
+        try:
+            agent_id = agent_data.get("id", f"agent-{uuid.uuid4()}")
+            creation_errors = []
+
+            # Debug print of the important directories we're using
+            logger.info(f"Server process ID: {os.getpid()}")
+            logger.info(f"Working directory: {os.getcwd()}")
+            logger.info(f"Server file: {os.path.abspath(__file__)}")
+            logger.info(f"Project path: {self.project_path}")
+
+            # Configure the LLM using dictionary approach
+            llm_provider = agent_data.get("llm_provider", "openai")
+            llm_model = agent_data.get("llm_model", "gpt-4")
+            
+            llm_config = {
+                "provider": llm_provider,
+                "model": llm_model
+            }
+            
+            # Add API keys if available
+            if os.environ.get("OPENAI_API_KEY") and llm_provider == "openai":
+                llm_config["api_key"] = os.environ.get("OPENAI_API_KEY")
+            elif os.environ.get("ANTHROPIC_API_KEY") and llm_provider == "anthropic":
+                llm_config["api_key"] = os.environ.get("ANTHROPIC_API_KEY")
+                
+            # Prepare system prompt with XML tags for Claude
+            system_prompt = agent_data.get("system_prompt", "")
+            if not system_prompt:
+                name = agent_data.get("name", agent_data.get("character_name", f"Agent {agent_id}"))
+                role = agent_data.get("role", "Assistant")
+                goal = agent_data.get("goal", "Help the user accomplish their tasks effectively")
+                backstory = agent_data.get("backstory", "You are a helpful AI assistant")
+                
+                system_prompt = f"""<agent>
+<role>You are {name}, a {role}.</role>
+<goal>{goal}</goal>
+<backstory>{backstory}</backstory>
+</agent>"""
+                
+                # Add personality section if traits exist
+                personality = []
+                if "tone" in agent_data and agent_data["tone"]:
+                    personality.append(f"<tone>{agent_data['tone']}</tone>")
+                    
+                if "learning_style" in agent_data and agent_data["learning_style"]:
+                    personality.append(f"<learning_style>{agent_data['learning_style']}</learning_style>")
+                    
+                if "working_style" in agent_data and agent_data["working_style"]:
+                    personality.append(f"<working_style>{agent_data['working_style']}</working_style>")
+                    
+                if "communication_style" in agent_data and agent_data["communication_style"]:
+                    personality.append(f"<communication_style>{agent_data['communication_style']}</communication_style>")
+                    
+                if "traits" in agent_data and isinstance(agent_data["traits"], list):
+                    traits_str = ", ".join(agent_data["traits"])
+                    personality.append(f"<traits>{traits_str}</traits>")
+                    
+                if "quirks" in agent_data and isinstance(agent_data["quirks"], list):
+                    quirks_str = ", ".join(agent_data["quirks"])
+                    personality.append(f"<quirks>{quirks_str}</quirks>")
+                    
+                if personality:
+                    system_prompt += "\n\n<personality>\n" + "\n".join(personality) + "\n</personality>"
+                
+                # Add memory system section
+                memory_section = """
+<memory>
+<system>You have access to a comprehensive memory system that stores your past interactions and knowledge. This memory system helps you maintain continuity in conversations and leverage past knowledge to better assist users.</system>
+<retrieval>Your memories are automatically retrieved when semantically similar topics arise, providing you with relevant context.</retrieval>
+<learning>You can store new information you learn during conversations for later reference and use.</learning>
+</memory>"""
+                system_prompt += memory_section
+            
+            # Create the agent dictionary for configuration
+            agent_dict = {
+                "role": agent_data.get("role", "Assistant"),
+                "goal": agent_data.get("goal", "Help the user accomplish their tasks effectively"),
+                "backstory": agent_data.get("backstory", "You are a helpful AI assistant"),
+                "name": agent_data.get("name", agent_data.get("character_name", f"Agent {agent_id}")),
+                "verbose": agent_data.get("verbose", True),
+                "allow_delegation": agent_data.get("allow_delegation", True),
+                "system_prompt": system_prompt,
+                "llm": llm_config
+            }
+            
+            # Add optional parameters if they exist
+            optional_fields = [
+                "tone", "learning_style", "working_style", "communication_style", 
+                "traits", "quirks", "metadata"
+            ]
+            
+            for field in optional_fields:
+                if field in agent_data and agent_data[field]:
+                    agent_dict[field] = agent_data[field]
+            
+            try:
+                # Create the agent using the dictionary approach
+                agent = Agent(**agent_dict)
+                logger.info(f"Created agent {agent_id} using dictionary approach")
+                
+                # Store the original dict for future reference
+                if not hasattr(agent, "original_dict"):
+                    setattr(agent, "original_dict", agent_dict)
+                
+                # Add property to safely get name if possible
+                if not hasattr(agent, 'name') or not callable(getattr(agent, 'name', None)):
+                    try:
+                        # Try to add a name property dynamically
+                        def get_name(self):
+                            if hasattr(self, '_name'):
+                                return self._name
+                            if hasattr(self, 'metadata') and isinstance(self.metadata, dict):
+                                if 'name' in self.metadata:
+                                    return self.metadata['name']
+                                if 'character_name' in self.metadata:
+                                    return self.metadata['character_name']
+                            return self.role
+
+                        # Only set if it doesn't already exist
+                        if not hasattr(agent.__class__, 'name') or not isinstance(agent.__class__.name, property):
+                            setattr(agent.__class__, 'name', property(get_name))
+                    except Exception as prop_err:
+                        logger.warning(f"Could not add name property to agent: {prop_err}")
+
+                # Store the agent
+                self.agents[agent_id] = agent
+
+                # Ensure the agent has all default tools
+                if hasattr(self, 'default_tools'):
+                    # Make sure agent_id is in agent_tools mapping
+                    if agent_id not in self.agent_tools:
+                        self.agent_tools[agent_id] = []
+
+                    # Ensure that shell_execute and code_diff are in the tools list
+                    tools_to_add = self.agent_tools[agent_id].copy()
+                    if "shell_execute" not in tools_to_add and "shell_execute" in self.tools:
+                        tools_to_add.append("shell_execute")
+                        logger.info(f"Added shell_execute tool to agent {agent_id}")
+
+                    if "code_diff" not in tools_to_add and "code_diff" in self.tools:
+                        tools_to_add.append("code_diff")
+                        logger.info(f"Added code_diff tool to agent {agent_id}")
+
+                    # Add default tools if needed
+                    self._attach_tools_to_agent(agent, tools_to_add)
+                    logger.info(f"Attached tools to agent {agent_id}: {tools_to_add}")
+
+                return agent
+                
+            except Exception as e:
+                creation_errors.append(f"Dictionary approach failed: {e}")
+                logger.error(f"Dictionary-based agent creation failed: {e}")
+                
+            # If we reach here, all approaches failed
+            logger.error(f"All agent creation approaches failed: {creation_errors}")
+            raise RuntimeError(f"Failed to create agent: {creation_errors}")
+                
+        except Exception as e:
+            logger.error(f"Error creating agent: {e}")
+            return None
+
+    def _create_task_from_data(self, task_data):
+        """
+        Create a CrewAI Task from the provided data using dictionary approach
+
+        Args:
+            task_data (dict): Task data
+
+        Returns:
+            Task: CrewAI Task object
+        """
+        try:
+            task_id = task_data.get("id", f"task-{uuid.uuid4()}")
+
+            # Get the assigned agent
+            agent_id = task_data.get("agent_id")
+            agent = self.agents.get(agent_id)
+            
+            # Create the task configuration dictionary
+            task_dict = {
+                "description": task_data.get("description", "No description provided"),
+                "expected_output": task_data.get("expected_output", "A detailed response"),
+            }
+            
+            # Format the task description with XML tags if needed
+            if "<task>" not in task_dict["description"]:
+                # Structure the description with XML tags
+                description = task_dict["description"]
+                formatted_description = f"""<task>
+<description>{description}</description>
+"""
+                
+                # Add additional details if available
+                if "context" in task_data and task_data["context"]:
+                    formatted_description += f"<context>{task_data['context']}</context>\n"
+                    
+                if "requirements" in task_data and task_data["requirements"]:
+                    if isinstance(task_data["requirements"], list):
+                        reqs = "\n".join([f"- {req}" for req in task_data["requirements"]])
+                        formatted_description += f"<requirements>\n{reqs}\n</requirements>\n"
+                    else:
+                        formatted_description += f"<requirements>{task_data['requirements']}</requirements>\n"
+                        
+                if "output_format" in task_data and task_data["output_format"]:
+                    formatted_description += f"<output_format>{task_data['output_format']}</output_format>\n"
+                    
+                formatted_description += "</task>"
+                task_dict["description"] = formatted_description
+            
+            # Add agent if available
+            if agent:
+                task_dict["agent"] = agent
+            
+            # Add optional fields
+            optional_fields = [
+                "context", "async_execution", "callbacks",
+                "output_file", "output_parser"
+            ]
+            
+            for field in optional_fields:
+                if field in task_data and task_data[field] is not None:
+                    task_dict[field] = task_data[field]
+            
+            # Handle special tool configuration
+            if "tool_ids" in task_data and task_data["tool_ids"]:
+                tool_ids = task_data["tool_ids"]
+                tools = []
+                for tool_id in tool_ids:
+                    if tool_id in self.tools:
+                        tools.append(self.tools[tool_id])
+                
+                if tools:
+                    task_dict["tools"] = tools
+            
+            # Create the task using dictionary method
+            task = Task(**task_dict)
+            
+            # Store additional metadata if provided
+            if "metadata" in task_data and task_data["metadata"]:
+                task.metadata = task_data["metadata"]
+                
+            # Store execution settings if provided
+            if "execution_settings" in task_data:
+                task.execution_settings = task_data.get("execution_settings", {})
+
+            # Store the task
+            self.tasks[task_id] = task
+            return task
+
+        except Exception as e:
+            logger.error(f"Error creating task: {e}")
+            return None
+
+    def create_agent(self, agent_data):
+        """
+        Create a new agent
+
+        Args:
+            agent_data (dict): Agent data
+
+        Returns:
+            dict: Created agent data
+        """
+        agent = self._create_agent_from_data(agent_data)
+        if agent:
+            self._save_state()
+            return {"id": agent_data.get("id"), "status": "created"}
+
+        return {"status": "error", "message": "Failed to create agent"}
+
+    def create_task(self, task_data):
+        """
+        Create a new task
+
+        Args:
+            task_data (dict): Task data
+
+        Returns:
+            dict: Created task data
+        """
+        task = self._create_task_from_data(task_data)
+        if task:
+            self._save_state()
+            return {"id": task_data.get("id"), "status": "created"}
+
+        return {"status": "error", "message": "Failed to create task"}
+
+    def create_crew(self, crew_data):
+        """
+        Create a new crew of agents
+        
+        Args:
+            crew_data (dict): Crew configuration data
+                - id (str): Unique identifier for the crew
+                - name (str): Name of the crew
+                - goal (str): Goal of the crew
+                - agent_ids (list): List of agent IDs to include in the crew
+                - task_ids (list): List of task IDs to include in the crew
+                - process (str): Process type (sequential, hierarchical)
+                - verbose (bool): Whether to run in verbose mode
+                - manager_llm_config (dict): Optional manager LLM configuration
+                - memory (bool): Whether to enable memory
+                - cache (bool): Whether to enable cache
+                - embedder_config (dict): Optional embedder configuration
+                
+        Returns:
+            dict: Crew creation result
+        """
+        try:
+            # Validate required fields
+            required_fields = ["id", "name", "goal"]
+            for field in required_fields:
+                if field not in crew_data:
+                    return {"status": "error", "message": f"Missing required field: {field}"}
+            
+            # Generate a unique ID if not provided
+            crew_id = crew_data.get("id", str(uuid.uuid4()))
+            
+            # Ensure we don't already have a crew with this ID
+            if crew_id in self.crews:
+                return {"status": "error", "message": f"Crew with ID {crew_id} already exists"}
+            
+            # Log the crew creation attempt
+            logger.info(f"Creating crew: {crew_id} - {crew_data.get('name', 'Unnamed Crew')}")
+            
+            # Get list of agent IDs and task IDs
+            agent_ids = crew_data.get("agent_ids", [])
+            task_ids = crew_data.get("task_ids", [])
+            
+            # Load the agents
+            agents = []
+            for agent_id in agent_ids:
+                if agent_id in self.agents:
+                    agents.append(self.agents[agent_id])
+                else:
+                    return {"status": "error", "message": f"Agent with ID {agent_id} not found"}
+            
+            # Load the tasks
+            tasks = []
+            for task_id in task_ids:
+                if task_id in self.tasks:
+                    tasks.append(self.tasks[task_id])
+                else:
+                    return {"status": "error", "message": f"Task with ID {task_id} not found"}
+                    
+            # Format crew description with XML tags if not already formatted
+            crew_description = crew_data.get("description", "")
+            if crew_description and "<crew_description>" not in crew_description:
+                crew_description = f"<crew_description>\n{crew_description}\n</crew_description>"
+            
+            # Format crew goal with XML tags if not already formatted
+            crew_goal = crew_data.get("goal", "")
+            if crew_goal and "<crew_goal>" not in crew_goal:
+                crew_goal = f"<crew_goal>\n{crew_goal}\n</crew_goal>"
+            
+            # Prepare process type
+            process_type = crew_data.get("process", "sequential")
+            if process_type.lower() == "sequential":
+                process = Process.sequential
+            elif process_type.lower() == "hierarchical":
+                process = Process.hierarchical
+            else:
+                process = Process.sequential
+                logger.warning(f"Unknown process type: {process_type}. Using sequential.")
+            
+            # Create crew configuration dictionary
+            crew_config = {
+                "agents": agents,
+                "tasks": tasks,
+                "process": process,
+                "verbose": crew_data.get("verbose", True),
+                "memory": crew_data.get("memory", True),
+                "cache": crew_data.get("cache", True),
+            }
+            
+            # Add optional manager LLM if provided
+            if "manager_llm_config" in crew_data and crew_data["manager_llm_config"]:
+                manager_config = crew_data["manager_llm_config"]
+                # Create manager LLM config dictionary
+                if "provider" in manager_config and "model" in manager_config:
+                    if manager_config["provider"].lower() == "openai":
+                        from langchain_openai import ChatOpenAI
+                        manager_llm = ChatOpenAI(model=manager_config["model"])
+                        crew_config["manager_llm"] = manager_llm
+                    elif manager_config["provider"].lower() == "anthropic":
+                        from langchain_anthropic import ChatAnthropic
+                        manager_llm = ChatAnthropic(model=manager_config["model"])
+                        crew_config["manager_llm"] = manager_llm
+                    else:
+                        logger.warning(f"Unsupported manager LLM provider: {manager_config['provider']}")
+            
+            # Add embedder if provided or use default
+            if "embedder_config" in crew_data and crew_data["embedder_config"]:
+                embedder_config = crew_data["embedder_config"]
+                # Pass embedder config directly - will be handled by CrewAI
+                crew_config["embedder"] = embedder_config
+            else:
+                # Default to HuggingFace embeddings
+                try:
+                    embedder_config = {
+                        "provider": "huggingface",
+                        "model": "all-MiniLM-L6-v2"
+                    }
+                    crew_config["embedder"] = embedder_config
+                    logger.info("Using default HuggingFace embeddings for crew")
+                except Exception as embedder_error:
+                    logger.warning(f"Could not create default embeddings: {embedder_error}")
+            
+            # Set name and goal for the Crew
+            crew_config["name"] = crew_data.get("name", "Unnamed Crew")
+            crew_config["goal"] = crew_goal
+            if crew_description:
+                crew_config["description"] = crew_description
+            
+            # Create the crew using dictionary unpacking
+            crew = Crew(**crew_config)
+            
+            # Store the crew
+            self.crews[crew_id] = crew
+            
+            return {
+                "status": "created", 
+                "crew_id": crew_id,
+                "message": f"Crew {crew_data.get('name', 'Unnamed Crew')} created successfully"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating crew: {e}")
+            return {"status": "error", "message": f"Error creating crew: {str(e)}"}
+
+    def run_crew(self, crew_id):
+        """
+        Run a crew
+
+        Args:
+            crew_id (str): Crew ID
+
+        Returns:
+            dict: Result of running the crew
+        """
+        try:
+            crew = self.crews.get(crew_id)
+            if not crew:
+                return {"status": "error", "message": f"Crew with ID {crew_id} not found"}
+
+            # Import ensure_string_output from our adapter
+            try:
+                from crewai_adapter import ensure_string_output
+            except ImportError:
+                # Fallback implementation if import fails
+                def ensure_string_output(result):
+                    if isinstance(result, (dict, list)):
+                        try:
+                            import json
+                            return json.dumps(result, indent=2)
+                        except Exception:
+                            return str(result)
+                    elif result is None:
+                        return ""
+                    return str(result)
+
+            # Run the crew
+            result = crew.kickoff()
+
+            # Ensure we have a string result
+            string_result = ensure_string_output(result)
+            
+            # Format the result with XML tags if not already formatted
+            if string_result and "<result>" not in string_result:
+                crew_name = getattr(crew, 'name', 'Crew')
+                formatted_result = f"""<result from="{crew_name}">
+{string_result}
+</result>"""
+            else:
+                formatted_result = string_result
+
+            return {
+                "status": "success",
+                "result": formatted_result,
+                "crew_id": crew_id
+            }
+
+        except Exception as e:
+            logger.error(f"Error running crew: {e}")
+            return {"status": "error", "message": f"Error running crew: {str(e)}"}
+
+    def create_task_coordinator(self, crew_id=None):
+        """
+        Creates a specialized Task Coordinator agent that handles task assignment,
+        delegation, and workload management across the team.
+
+        The Task Coordinator handles:
+        1. Finding the best agent for a given task based on skills and availability
+        2. Managing agent workloads and preventing overallocation
+        3. Facilitating delegation between agents
+        4. Monitoring task completion and reassigning as needed
+
+        Args:
+            crew_id (str, optional): ID of the crew this coordinator will work with
+
+        Returns:
+            dict: Status and the created agent's ID
+        """
+        try:
+            # Create the Task Coordinator agent with specialized capabilities
+            task_coordinator_data = {
+                "name": "Coordinator",
+                "role": "Task Coordinator",
+                "goal": "Efficiently assign tasks to the most suitable agents and facilitate team collaboration",
+                "backstory": "Coordinator excels at understanding agent capabilities, workloads, and task requirements to create optimal assignments. They maintain the team's productivity by ensuring work is distributed based on skills, availability, and priorities.",
+                "tone": "Efficient",
+                "learning_style": "Analytical",
+                "working_style": "Systematic",
+                "communication_style": "Clear and direct",
+                "quirks": ["Always considers workload balance", "Prioritizes team efficiency over individual preferences"],
+                "metadata": {
+                    "team": "management",
+                    "logical_id": "task_coordinator",
+                    "is_coordinator": True
+                }
+            }
+
+            # Create the coordinator agent
+            coordinator = self._create_agent_from_data(task_coordinator_data)
+
+            if coordinator and hasattr(coordinator, 'id'):
+                coord_id = coordinator.id
+                self.agents[coord_id] = coordinator
+
+                # If we have a crew, add this agent to it
+                if crew_id and crew_id in self.crews:
+                    # Add coordinator to the crew's agents
+                    # Note: This might need adjustment based on the CrewAI version
+                    # as some versions don't allow adding agents after crew creation
+                    try:
+                        self.crews[crew_id].agents.append(coordinator)
+                    except Exception as e:
+                        logger.warning(f"Could not add coordinator to crew: {e}")
+
+                return {
+                    "status": "success",
+                    "agent_id": coord_id,
+                    "message": "Task Coordinator agent created successfully"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Failed to create Task Coordinator agent"
+                }
+
+        except Exception as e:
+            logger.error(f"Error creating Task Coordinator: {e}")
+            return {
+                "status": "error",
+                "message": f"Failed to create Task Coordinator: {str(e)}"
+            }
+
+    def update_agent_workload(self, agent_id, task_id=None, action="add", task_data=None):
+        """
+        Update an agent's workload metrics when tasks are assigned or completed
+
+        Args:
+            agent_id (str): The agent's ID
+            task_id (str, optional): The task ID being added or removed
+            action (str): Either "add" or "remove" to adjust workload
+            task_data (dict, optional): Additional task data for workload calculation
+
+        Returns:
+            dict: Updated workload metrics
+        """
+        # Initialize workload record if it doesn't exist
+        if agent_id not in self.agent_workloads:
+            self.agent_workloads[agent_id] = {
+                "active_tasks": 0,
+                "completed_tasks": 0,
+                "task_complexity": 0,
+                "weighted_workload": 0,
+                "last_updated": None,
+                "task_history": []
+            }
+
+        # Initialize agent's task list if it doesn't exist
+        if agent_id not in self.agent_tasks:
+            self.agent_tasks[agent_id] = []
+
+        workload = self.agent_workloads[agent_id]
+        now = time.time()
+
+        # Calculate task complexity (1-10 scale)
+        task_complexity = 5  # Default medium complexity
+        if task_data:
+            # Base complexity on priority and estimated duration
+            priority_values = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+            priority = task_data.get("priority", "medium")
+            priority_factor = priority_values.get(priority.lower(), 2)
+
+            # Get description length as a proxy for complexity
+            description = task_data.get("description", "")
+            length_factor = min(3, max(1, len(description) // 100))
+
+            # Factor in required skills
+            required_skills = task_data.get("required_skills", [])
+            skill_factor = min(3, len(required_skills))
+
+            # Calculate complexity score (1-10)
+            task_complexity = min(10, priority_factor + length_factor + skill_factor)
+
+        # Update workload based on action
+        if action == "add" and task_id:
+            # Add task to agent's task list if not already there
+            if task_id not in self.agent_tasks[agent_id]:
+                self.agent_tasks[agent_id].append(task_id)
+
+            # Update workload metrics
+            workload["active_tasks"] += 1
+            workload["task_complexity"] += task_complexity
+            workload["weighted_workload"] = workload["active_tasks"] * (workload["task_complexity"] / max(1, workload["active_tasks"]))
+
+            # Add to task history
+            workload["task_history"].append({
+                "task_id": task_id,
+                "action": "assigned",
+                "timestamp": now,
+                "complexity": task_complexity
+            })
+
+            # Limit history size to prevent unbounded growth
+            if len(workload["task_history"]) > 100:
+                workload["task_history"] = workload["task_history"][-100:]
+
+            # Update task status
+            if task_id not in self.task_status:
+                self.task_status[task_id] = {}
+
+            self.task_status[task_id].update({
+                "status": "assigned",
+                "assigned_to": agent_id,
+                "assigned_at": now,
+                "complexity": task_complexity,
+                "last_updated": now
+            })
+
+        elif action == "remove" and task_id:
+            # Remove task from agent's task list
+            if task_id in self.agent_tasks[agent_id]:
+                self.agent_tasks[agent_id].remove(task_id)
+
+            # Update workload metrics
+            workload["active_tasks"] = max(0, workload["active_tasks"] - 1)
+            workload["completed_tasks"] += 1
+            workload["task_complexity"] = max(0, workload["task_complexity"] - task_complexity)
+
+            if workload["active_tasks"] > 0:
+                workload["weighted_workload"] = workload["active_tasks"] * (workload["task_complexity"] / workload["active_tasks"])
+            else:
+                workload["weighted_workload"] = 0
+
+            # Add to task history
+            workload["task_history"].append({
+                "task_id": task_id,
+                "action": "completed",
+                "timestamp": now,
+                "complexity": task_complexity
+            })
+
+            # Limit history size
+            if len(workload["task_history"]) > 100:
+                workload["task_history"] = workload["task_history"][-100:]
+
+            # Update task status
+            if task_id in self.task_status:
+                self.task_status[task_id].update({
+                    "status": "completed",
+                    "completed_at": now,
+                    "last_updated": now
+                })
+
+        # Update timestamp
+        workload["last_updated"] = now
+
+        # Save updated state
+        self._save_state()
+
+        logger.info(f"Updated workload for agent {agent_id}: Active tasks: {workload['active_tasks']}, Weighted workload: {workload['weighted_workload']:.2f}")
+
+        return workload
+
+    def find_suitable_agent(self, task_description, required_skills=None, priority="medium", deadline=None):
+        """
+        Finds the most suitable agent for a given task based on skills, workload, and availability.
+        This can be used by both humans and other agents for delegation.
+
+        Args:
+            task_description (str): Description of the task
+            required_skills (list, optional): List of skills required for the task
+            priority (str, optional): Priority of the task (low, medium, high, critical)
+            deadline (str, optional): ISO format date string for when the task is due
+
+        Returns:
+            dict: Recommended agent(s) with suitability scores and reasons
+        """
+        if not self.agents:
+            return {
+                "status": "error",
+                "message": "No agents available for task assignment"
+            }
+
+        # Create task data for workload calculation
+        task_data = {
+            "description": task_description,
+            "required_skills": required_skills or [],
+            "priority": priority,
+            "deadline": deadline
+        }
+
+        # Find our task coordinator if available
+        coordinator = self.find_agent(logical_id="task_coordinator")
+
+        # If we have a coordinator, use that agent to make the recommendation
+        if coordinator:
+            # Format available agents with real workload data
+            agent_list = self._format_agent_list_for_prompt(include_workload=True)
+
+            prompt = f"""
+            Task Assignment Analysis
+
+            Task Description: {task_description}
+
+            {f'Required Skills: {", ".join(required_skills)}' if required_skills else ''}
+            Priority: {priority}
+            {f'Deadline: {deadline}' if deadline else ''}
+
+            Available Agents (with current workload information):
+            {agent_list}
+
+            Based on the task requirements and agent capabilities, determine the most suitable agent(s) for this task.
+            Consider skill match, role relevance, current workload, and past performance.
+
+            For each recommended agent, provide:
+            1. A suitability score from 0-100
+            2. Reasoning for why this agent is suitable
+            3. Any potential concerns or limitations
+
+            Return your recommendation in JSON format:
+            {{
+                "recommendations": [
+                    {{
+                        "agent_id": "<agent_id>",
+                        "name": "<agent_name>",
+                        "suitability_score": <score>,
+                        "reasoning": "<reasons why this agent is suitable>",
+                        "concerns": "<any potential issues or limitations>"
+                    }}
+                ],
+                "explanation": "<overall explanation of the recommendation logic>"
+            }}
+            """
+
+            # Ask the coordinator for a recommendation
+            try:
+                from crewai import RPCAgent
+                if isinstance(coordinator, RPCAgent):
+                    # For newer CrewAI versions with RPCAgent
+                    response = coordinator.run(prompt)
+                else:
+                    # For older CrewAI versions
+                    response = coordinator._process_message(prompt)
+
+                # Parse the response for JSON
+                import re
+                import json
+
+                # Try to extract JSON from the response
+                json_match = re.search(r'```json\n(.*?)\n```', response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
+                else:
+                    # Look for just a JSON object without markdown formatting
+                    json_match = re.search(r'({[\s\S]*})', response)
+                    json_str = json_match.group(1) if json_match else response
+
+                try:
+                    recommendation = json.loads(json_str)
+                    return {
+                        "status": "success",
+                        "message": "Agent recommendation completed",
+                        "data": recommendation
+                    }
+                except json.JSONDecodeError:
+                    logger.error(f"Could not parse JSON from coordinator response: {response}")
+
+            except Exception as e:
+                logger.error(f"Error getting recommendation from coordinator: {e}")
+
+        # Fallback: enhanced matching algorithm with real workload data
+        recommendations = []
+
+        # Iterate through all agents
+        for agent_id, agent in self.agents.items():
+            # Skip the coordinator itself
+            if hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and agent.metadata.get('is_coordinator'):
+                continue
+
+            # Calculate a suitability score
+            score = 50  # Base score
+            reasoning = []
+            concerns = []
+
+            # Check for required skills
+            agent_skills = []
+            if hasattr(agent, 'skills') and agent.skills:
+                if isinstance(agent.skills, list):
+                    agent_skills = agent.skills
+                elif isinstance(agent.skills, str):
+                    agent_skills = [s.strip() for s in agent.skills.split(',')]
+
+            if required_skills and agent_skills:
+                matched_skills = [skill for skill in required_skills if any(s.lower() in skill.lower() for s in agent_skills)]
+                skill_match_percentage = len(matched_skills) / len(required_skills) if required_skills else 0
+                score += skill_match_percentage * 30  # Up to 30 points for skills
+
+                if skill_match_percentage > 0.7:
+                    reasoning.append(f"Has {len(matched_skills)}/{len(required_skills)} required skills")
+                elif skill_match_percentage > 0:
+                    reasoning.append(f"Has some relevant skills ({len(matched_skills)}/{len(required_skills)})")
+                    concerns.append("Missing some required skills")
+                else:
+                    concerns.append("No matching skills found")
+                    score -= 20
+
+            # Role relevance (simple string matching)
+            if hasattr(agent, 'role') and agent.role:
+                lower_desc = task_description.lower()
+                lower_role = agent.role.lower()
+
+                role_keywords = lower_role.split()
+                matched_keywords = [kw for kw in role_keywords if kw in lower_desc]
+
+                if matched_keywords:
+                    score += 15  # Up to 15 points for role relevance
+                    reasoning.append(f"Role '{agent.role}' aligns with task description")
+
+            # Check actual agent workload
+            workload_info = self.agent_workloads.get(agent_id, {})
+            active_tasks = workload_info.get("active_tasks", 0)
+            weighted_workload = workload_info.get("weighted_workload", 0)
+
+            # Performance history (if available)
+            perf_info = self.agent_performance.get(agent_id, {})
+            success_rate = perf_info.get("success_rate", 0.8)  # Default to 80% success
+
+            # Calculate workload factor
+            if active_tasks == 0:
+                # No active tasks - fully available
+                score += 20
+                reasoning.append("Fully available (no active tasks)")
+            elif active_tasks < 3:
+                # Light workload
+                score += 15
+                reasoning.append(f"Lightly loaded ({active_tasks} active tasks)")
+            elif active_tasks < 5:
+                # Moderate workload
+                score += 5
+                reasoning.append(f"Moderately loaded ({active_tasks} active tasks)")
+                concerns.append("Has some existing workload")
+            else:
+                # Heavy workload
+                score -= 10
+                reasoning.append(f"Heavily loaded ({active_tasks} active tasks)")
+                concerns.append(f"Already has {active_tasks} tasks in progress")
+
+            # Adjust for past performance
+            if success_rate > 0.9:
+                score += 10
+                reasoning.append("Excellent past performance")
+            elif success_rate > 0.75:
+                score += 5
+                reasoning.append("Good past performance")
+            elif success_rate < 0.6:
+                score -= 10
+                concerns.append("Below average past performance")
+
+            # Priority adjustments
+            if priority.lower() == "critical":
+                # For critical tasks, weight skill match more heavily
+                if skill_match_percentage > 0.8:
+                    score += 15
+                    reasoning.append("Excellent skill match for critical task")
+
+                # Penalize heavily loaded agents more for critical tasks
+                if active_tasks > 3:
+                    score -= 15
+                    concerns.append("Too many existing tasks for a critical priority assignment")
+
+            # Add to recommendations if score is reasonable
+            if score > 40:
+                recommendations.append({
+                    "agent_id": agent_id,
+                    "name": getattr(agent, 'name', None) or getattr(agent, 'role', None) or agent_id,
+                    "suitability_score": min(100, int(score)),
+                    "reasoning": ", ".join(reasoning),
+                    "concerns": ", ".join(concerns) if concerns else "None"
+                })
+
+        # Sort by suitability score
+        recommendations.sort(key=lambda x: x['suitability_score'], reverse=True)
+
+        return {
+            "status": "success",
+            "message": "Agent recommendation completed using enhanced algorithm",
+            "data": {
+                "recommendations": recommendations[:3],  # Top 3 recommendations
+                "explanation": "Recommendations based on skill matching, role relevance, actual workload, and past performance."
+            }
+        }
+
+    def handle_codebase_index(self, payload):
+        """
+        Handle codebase indexing operations
+        
+        Args:
+            payload (dict): Parameters for the indexing operation
+                - action: The specific action to perform (index, search, etc.)
+                - Other parameters specific to each action
+                
+        Returns:
+            dict: Result of the indexing operation
+        """
+        if not self.codebase_indexer:
+            return {
+                "status": "error", 
+                "message": "Codebase indexer is not available"
+            }
+            
+        try:
+            action = payload.get("action")
+            if not action:
+                return {"status": "error", "message": "No action specified"}
+                
+            logger.info(f"Executing codebase indexer action: {action}")
+            
+            if action == "estimate_files":
+                # Count files that would be indexed to get a total estimation
+                try:
+                    total_files = self.codebase_indexer.estimate_files()
+                    return {
+                        "status": "success",
+                        "total_files": total_files
+                    }
+                except Exception as e:
+                    logger.error(f"Error estimating files: {e}")
+                    return {
+                        "status": "error",
+                        "message": f"Error estimating files: {str(e)}"
+                    }
+            
+            elif action == "index":
+                # Perform indexing of the codebase
+                force = payload.get("force", False)
+                max_file_size = payload.get("max_file_size", 1024 * 1024)  # Default 1MB
+                with_progress = payload.get("with_progress", False)
+                
+                # If progress tracking is requested, use the progress callback
+                if with_progress:
+                    # Define a progress callback that will send progress to the UI
+                    def progress_callback(processed_files, total_files, current_file=None):
+                        # If a progress_callback was provided in the payload, call it
+                        if callable(payload.get("progress_callback")):
+                            payload["progress_callback"]({
+                                "processed_files": processed_files,
+                                "total_files": total_files,
+                                "current_file": current_file
+                            })
+                        
+                        # Skip simulated progress - don't report to UI
+                        if current_file and ("Simulated" in current_file or "simulation" in current_file):
+                            return
+                            
+                        # Print progress directly to stdout where the extension can capture it
+                        try:
+                            # Create JSON data that the extension can parse
+                            progress_data = {
+                                "processed_files": processed_files,
+                                "total_files": total_files,
+                                "current_file": current_file or ""
+                            }
+                            
+                            # Print with special marker that the extension will look for
+                            # This will be captured by the extension process
+                            message = f"PROGRESS_UPDATE: {json.dumps(progress_data)}"
+                            print(message, flush=True)
+                            # Add a newline to ensure messages don't get combined
+                            sys.stdout.flush()
+                            print(f"DEBUG_INDEXER: Sent progress update: {processed_files}/{total_files}", flush=True)
+                            
+                            # Also log progress for diagnostics
+                            progress_pct = int(processed_files/max(total_files, 1)*100)
+                            logger.info(f"Indexing progress: {processed_files}/{total_files} files ({progress_pct}%) - Current: {current_file}")
+                        except Exception as e:
+                            logger.error(f"Error sending progress update: {e}")
+                    
+                    # Call index_workspace with progress tracking
+                    success = self.codebase_indexer.index_workspace(
+                        force=force, 
+                        max_file_size=max_file_size,
+                        progress_callback=progress_callback
+                    )
+                else:
+                    # Call without progress tracking
+                    success = self.codebase_indexer.index_workspace(force=force, max_file_size=max_file_size)
+                
+                index_status = self.codebase_indexer.get_index_status()
+                
+                return {
+                    "status": "success" if success else "error",
+                    "message": "Indexing completed successfully" if success else "Indexing failed",
+                    "index_status": index_status
+                }
+                
+            elif action == "search":
+                # Search for symbols in the codebase
+                query = payload.get("query")
+                symbol_type = payload.get("symbol_type")
+                language = payload.get("language")
+                limit = payload.get("limit", 100)
+                
+                if not query:
+                    return {"status": "error", "message": "Query parameter is required"}
+                    
+                symbols = self.codebase_indexer.search_symbols(
+                    query=query,
+                    symbol_type=symbol_type,
+                    language=language,
+                    limit=limit
+                )
+                
+                return {
+                    "status": "success",
+                    "symbols": symbols,
+                    "count": len(symbols)
+                }
+                
+            elif action == "find_references":
+                # Find references to a symbol
+                symbol_name = payload.get("symbol_name")
+                file_path = payload.get("file_path")
+                
+                if not symbol_name:
+                    return {"status": "error", "message": "symbol_name parameter is required"}
+                    
+                references = self.codebase_indexer.find_references(
+                    symbol_name=symbol_name,
+                    file_path=file_path
+                )
+                
+                return {
+                    "status": "success",
+                    "references": references,
+                    "count": len(references)
+                }
+                
+            elif action == "get_dependencies":
+                # Get dependencies of a file
+                file_path = payload.get("file_path")
+                
+                if not file_path:
+                    return {"status": "error", "message": "file_path parameter is required"}
+                    
+                dependencies = self.codebase_indexer.get_dependencies(file_path)
+                
+                return {
+                    "status": "success",
+                    "dependencies": dependencies,
+                    "count": len(dependencies)
+                }
+                
+            elif action == "get_dependents":
+                # Get files that depend on a module
+                module_name = payload.get("module_name")
+                
+                if not module_name:
+                    return {"status": "error", "message": "module_name parameter is required"}
+                    
+                dependents = self.codebase_indexer.get_dependents(module_name)
+                
+                return {
+                    "status": "success",
+                    "dependents": dependents,
+                    "count": len(dependents)
+                }
+                
+            elif action == "get_file_symbols":
+                # Get symbols defined in a file
+                file_path = payload.get("file_path")
+                
+                if not file_path:
+                    return {"status": "error", "message": "file_path parameter is required"}
+                    
+                symbols = self.codebase_indexer.get_file_symbols(file_path)
+                
+                return {
+                    "status": "success",
+                    "symbols": symbols,
+                    "count": len(symbols)
+                }
+                
+            elif action == "get_symbol_by_location":
+                # Get symbol at a specific location
+                file_path = payload.get("file_path")
+                line = payload.get("line")
+                
+                if not file_path or line is None:
+                    return {"status": "error", "message": "file_path and line parameters are required"}
+                    
+                symbol = self.codebase_indexer.get_symbol_by_location(file_path, line)
+                
+                return {
+                    "status": "success",
+                    "symbol": symbol,
+                    "found": symbol is not None
+                }
+                
+            elif action == "clear_index":
+                # Clear the index
+                success = self.codebase_indexer.clear_index()
+                
+                return {
+                    "status": "success" if success else "error",
+                    "message": "Index cleared successfully" if success else "Failed to clear index"
+                }
+                
+            elif action == "status":
+                # Get the current status of the index
+                status = self.codebase_indexer.get_index_status()
+                
+                return {
+                    "status": "success",
+                    "index_status": status
+                }
+                
+            else:
+                return {"status": "error", "message": f"Unknown codebase index action: {action}"}
+                
+        except Exception as e:
+            logger.error(f"Error in codebase indexing operation: {e}", exc_info=True)
+            return {"status": "error", "message": f"Codebase indexing error: {str(e)}"}
+
+    def agent_to_agent_message(self, from_agent_id, to_agent_id, message, context=None):
+        """
+        Facilitate direct agent-to-agent communication
+
+        Args:
+            from_agent_id (str): ID of the agent sending the message
+            to_agent_id (str): ID of the agent receiving the message
+            message (str): Content of the message
+            context (dict, optional): Additional context or metadata
+
+        Returns:
+            dict: Response from the receiving agent
+        """
+        if not from_agent_id or not to_agent_id:
+            return {
+                "status": "error",
+                "message": "Both sender and receiver agent IDs are required"
+            }
+
+        # Verify both agents exist
+        from_agent = self.agents.get(from_agent_id)
+        to_agent = self.agents.get(to_agent_id)
+
+        if not from_agent:
+            return {
+                "status": "error",
+                "message": f"Sender agent {from_agent_id} not found"
+            }
+
+        if not to_agent:
+            return {
+                "status": "error",
+                "message": f"Receiver agent {to_agent_id} not found"
+            }
+
+        # Build a formatted message that includes sender context
+        from_name = getattr(from_agent, 'name', from_agent_id)
+        from_role = getattr(from_agent, 'role', 'Agent')
+
+        formatted_message = f"""
+        Message from {from_name} ({from_role}):
+
+        {message}
+        """
+
+        # If context is provided, add it
+        if context:
+            # Context could include things like:
+            # - Current task the sender is working on
+            # - Reason for communication
+            # - Any shared context
+            context_str = "\n".join([f"{k}: {v}" for k, v in context.items()])
+            formatted_message += f"\n\nAdditional Context:\n{context_str}"
+
+        # Create metadata for the receiver
+        metadata = {
+            "message_type": "agent_to_agent",
+            "from_agent_id": from_agent_id,
+            "from_agent_name": from_name,
+            "from_agent_role": from_role,
+            "timestamp": time.time()
+        }
+
+        # If the sending agent has learning context, include it
+        if hasattr(from_agent, 'metadata') and isinstance(from_agent.metadata, dict):
+            if 'learning_context' in from_agent.metadata:
+                metadata['sender_learning_context'] = from_agent.metadata['learning_context']
+
+        # Send the message to the receiving agent
+        logger.info(f"Agent {from_agent_id} sending message to agent {to_agent_id}")
+
+        # Use our message sending mechanism with the metadata
+        response = self.send_message_to_agent(to_agent_id, formatted_message, False, metadata)
+
+        # Record the interaction in both agents' metadata for learning
+        try:
+            # Record in sender's metadata
+            if hasattr(from_agent, 'metadata') and isinstance(from_agent.metadata, dict):
+                if 'communications' not in from_agent.metadata:
+                    from_agent.metadata['communications'] = []
+
+                from_agent.metadata['communications'].append({
+                    "type": "sent",
+                    "to": to_agent_id,
+                    "timestamp": time.time(),
+                    "message": message[:100] + "..." if len(message) > 100 else message,
+                    "context": context
+                })
+
+            # Record in receiver's metadata
+            if hasattr(to_agent, 'metadata') and isinstance(to_agent.metadata, dict):
+                if 'communications' not in to_agent.metadata:
+                    to_agent.metadata['communications'] = []
+
+                to_agent.metadata['communications'].append({
+                    "type": "received",
+                    "from": from_agent_id,
+                    "timestamp": time.time(),
+                    "message": message[:100] + "..." if len(message) > 100 else message,
+                    "context": context
+                })
+        except Exception as e:
+            logger.error(f"Error recording communication metadata: {e}")
+
+        return response
+
+    def _format_agent_list_for_prompt(self, include_workload=False):
+        """
+        Format a list of available agents for inclusion in prompts
+        
+        Args:
+            include_workload (bool): Whether to include agent workload information
+            
+        Returns:
+            str: Formatted agent list
+        """
+        try:
+            # Start with XML opening tag for team section
+            formatted_list = "<team>\n"
+            
+            # Get all agents
+            for agent_id, agent in self.agents.items():
+                agent_name = getattr(agent, 'name', 'unknown')
+                agent_role = getattr(agent, 'role', 'unknown')
+                
+                # Start agent entry
+                formatted_list += f"<agent id=\"{agent_id}\">\n"
+                formatted_list += f"  <name>{agent_name}</name>\n"
+                formatted_list += f"  <role>{agent_role}</role>\n"
+                
+                # Add agent goal if available
+                if hasattr(agent, 'goal'):
+                    formatted_list += f"  <goal>{agent.goal}</goal>\n"
+                
+                # Add workload information if requested
+                if include_workload and agent_id in self.agent_workload:
+                    workload = self.agent_workload.get(agent_id, {})
+                    tasks = workload.get("tasks", [])
+                    
+                    if tasks:
+                        formatted_list += "  <workload>\n"
+                        for task_id in tasks:
+                            if task_id in self.tasks:
+                                task = self.tasks[task_id]
+                                task_desc = getattr(task, 'description', 'unknown task')
+                                # Simplify description if it has XML tags
+                                if "<task>" in task_desc:
+                                    # Extract just the description part
+                                    match = re.search(r'<description>(.*?)</description>', task_desc, re.DOTALL)
+                                    if match:
+                                        task_desc = match.group(1).strip()
+                                
+                                formatted_list += f"    <task id=\"{task_id}\">{task_desc}</task>\n"
+                        formatted_list += "  </workload>\n"
+                
+                # Close agent entry
+                formatted_list += "</agent>\n"
+            
+            # Add closing tag
+            formatted_list += "</team>"
+            
+            return formatted_list
+        except Exception as e:
+            logger.error(f"Error formatting agent list: {e}")
+            return "<team>Error formatting agent list</team>"
+
+    def assign_task(self, task_data, assignee_id=None):
+        """
+        Assigns a task to an agent, either directly or by finding the most suitable agent.
+
+        Args:
+            task_data (dict): Task data including description, priority, etc.
+            assignee_id (str, optional): Specific agent to assign to, or None to auto-assign
+
+        Returns:
+            dict: Assignment result with status and assigned agent info
+        """
+        # Generate a task ID if not provided
+        if 'id' not in task_data:
+            task_data['id'] = f"task-{uuid.uuid4()}"
+
+        task_id = task_data['id']
+
+        if not assignee_id:
+            # Find the best agent for this task
+            recommendation = self.find_suitable_agent(
+                task_description=task_data.get('description', ''),
+                required_skills=task_data.get('required_skills'),
+                priority=task_data.get('priority', 'medium'),
+                deadline=task_data.get('due_date')
+            )
+
+            if recommendation['status'] == 'success' and recommendation['data']['recommendations']:
+                # Get the top recommendation
+                top_choice = recommendation['data']['recommendations'][0]
+                assignee_id = top_choice['agent_id']
+
+                # Add the recommendation logic to task metadata
+                if 'metadata' not in task_data:
+                    task_data['metadata'] = {}
+
+                task_data['metadata']['assignment_logic'] = {
+                    'score': top_choice['suitability_score'],
+                    'reasoning': top_choice['reasoning'],
+                    'concerns': top_choice['concerns']
+                }
+
+                logger.info(f"Auto-assigned task {task_id} to agent {assignee_id} with score {top_choice['suitability_score']}")
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'Could not find a suitable agent for this task'
+                }
+
+        # Now assign the task
+        agent = self.agents.get(assignee_id)
+        if not agent:
+            return {
+                'status': 'error',
+                'message': f'Agent with ID {assignee_id} not found'
+            }
+
+        # Save task data in task_status
+        self.task_status[task_id] = {
+            **task_data,
+            "status": "assigned",
+            "assigned_to": assignee_id,
+            "assigned_at": time.time(),
+            "last_updated": time.time()
+        }
+
+        # Update the agent's workload tracking
+        self.update_agent_workload(
+            agent_id=assignee_id,
+            task_id=task_id,
+            action="add",
+            task_data=task_data
+        )
+
+        # Notify the agent (if needed)
+        agent_notification = {
+            "type": "task_assigned",
+            "task_id": task_id,
+            "description": task_data.get('description', ''),
+            "priority": task_data.get('priority', 'medium'),
+            "timestamp": time.time()
+        }
+
+        # If metadata has learning system data, include it
+        if task_data.get('metadata', {}).get('learning_context'):
+            agent_notification["learning_context"] = task_data['metadata']['learning_context']
+
+        # Store in agent metadata if available
+        if hasattr(agent, 'metadata') and isinstance(agent.metadata, dict):
+            if 'notifications' not in agent.metadata:
+                agent.metadata['notifications'] = []
+            agent.metadata['notifications'].append(agent_notification)
+
+        # Return success with details
+        return {
+            'status': 'success',
+            'message': 'Task assigned successfully',
+            'data': {
+                'task_id': task_id,
+                'assigned_to': {
+                    'id': assignee_id,
+                    'name': getattr(agent, 'name', None) or getattr(agent, 'role', None) or assignee_id
+                },
+                'workload': self.agent_workloads.get(assignee_id, {})
+            }
+        }
+
+    def list_agents(self, team=None):
+        """
+        List all available agents with their important attributes.
+
+        Args:
+            team (str, optional): Filter agents by team name/id
+
+        Returns:
+            list: List of agent information dictionaries
+        """
+        if not self.agents:
+            return []
+
+        result = []
+        for agent_id, agent in self.agents.items():
+            # Extract agent metadata
+            agent_info = {
+                "id": agent_id,
+                "name": getattr(agent, 'name', None),
+                "role": getattr(agent, 'role', None),
+            }
+
+            # Add metadata if available
+            if hasattr(agent, 'metadata') and isinstance(agent.metadata, dict):
+                agent_info["logical_id"] = agent.metadata.get('logical_id')
+                agent_info["team"] = agent.metadata.get('team')
+
+            # Filter by team if requested
+            if team and agent_info.get("team") != team:
+                continue
+
+            result.append(agent_info)
+
+        return result
+
+    def find_agent(self, identifier=None, name=None, role=None, logical_id=None, team=None):
+        """
+        Find an agent using various search criteria. This method provides flexible agent discovery
+        without needing to know specific agent IDs in advance.
+
+        Args:
+            identifier (str): Direct ID of the agent if known
+            name (str): Agent's name (case-insensitive partial match)
+            role (str): Agent's role (case-insensitive partial match)
+            logical_id (str): Logical ID stored in agent metadata
+            team (str): Team name or ID to filter agents
+
+        Returns:
+            Agent or None: The agent if found, otherwise None
+
+        Examples:
+            # Find by known ID
+            agent = find_agent(identifier="agent_123")
+
+            # Find by name (partial match)
+            agent = find_agent(name="Trinity")  # or even just "trin"
+
+            # Find by role (partial match)
+            agent = find_agent(role="Architect")
+
+            # Find by logical ID
+            agent = find_agent(logical_id="team_architect")
+
+            # Find by team and role
+            agent = find_agent(team="recruitment", role="Designer")
+
+        Note:
+            To see all available agents, use the list_agents() method.
+        """
+        if not self.agents:
+            logger.warning("No agents available to search")
+            return None
+
+        # Direct ID lookup if provided
+        if identifier and identifier in self.agents:
+            return self.agents[identifier]
+
+        candidates = list(self.agents.values())
+
+        # Filter by logical ID in metadata
+        if logical_id:
+            logical_id = logical_id.lower()
+            filtered = []
+            for agent in candidates:
+                if (hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and
+                    'logical_id' in agent.metadata and
+                    agent.metadata['logical_id'].lower() == logical_id):
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+
+        # Filter by name (partial match)
+        if name and candidates:
+            name = name.lower()
+            filtered = []
+            for agent in candidates:
+                if hasattr(agent, 'name') and agent.name and name in agent.name.lower():
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+
+        # Filter by role (partial match)
+        if role and candidates:
+            role = role.lower()
+            filtered = []
+            for agent in candidates:
+                if hasattr(agent, 'role') and agent.role and role in agent.role.lower():
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+
+        # Filter by team
+        if team and candidates:
+            team = team.lower()
+            filtered = []
+            for agent in candidates:
+                if (hasattr(agent, 'metadata') and isinstance(agent.metadata, dict) and
+                    'team' in agent.metadata and agent.metadata['team'].lower() == team):
+                    filtered.append(agent)
+            candidates = filtered if filtered else candidates
+
+        # Return the first match or None
+        return candidates[0] if candidates else None
+
+    def request_human_approval(self, request_data):
+        """
+        Request human approval for an action or decision.
+        This integrates with the notification system for human-in-the-loop workflows.
+
+        Args:
+            request_data (dict): Data about the approval request including:
+                - type: The type of approval (e.g., 'task_completion', 'conflict_resolution')
+                - agent_id: The agent requesting approval
+                - content: The content to approve
+                - options: Available options/actions
+                - urgency: How urgent the request is (low, medium, high)
+
+        Returns:
+            dict: Request details including a unique request ID
+        """
+        request_id = f"approval-{uuid.uuid4()}"
+
+        # Create the approval request structure
+        approval_request = {
+            "id": request_id,
+            "type": request_data.get("type", "general_approval"),
+            "agent_id": request_data.get("agent_id"),
+            "content": request_data.get("content"),
+            "options": request_data.get("options", []),
+            "urgency": request_data.get("urgency", "medium"),
+            "created_at": time.time(),
+            "status": "pending",
+            "response": None,
+            "resolved_at": None
+        }
+
+        # Store the approval request
+        self.pending_approvals[request_id] = approval_request
+
+        # Log the request
+        logger.info(f"Created human approval request {request_id} from agent {request_data.get('agent_id')}")
+
+        return {
+            "status": "success",
+            "message": "Human approval request created",
+            "data": approval_request
+        }
+
+    def resolve_approval_request(self, request_id, decision, comment=None):
+        """
+        Resolve a pending human approval request
+
+        Args:
+            request_id (str): The ID of the approval request
+            decision (str): The decision - 'approve', 'reject', or an option ID
+            comment (str, optional): Optional comment explaining the decision
+
+        Returns:
+            dict: Updated approval request data
+        """
+        if request_id not in self.pending_approvals:
+            return {
+                "status": "error",
+                "message": f"Approval request {request_id} not found"
+            }
+
+        approval_request = self.pending_approvals[request_id]
+
+        # Update the request
+        approval_request["status"] = "resolved"
+        approval_request["resolved_at"] = time.time()
+        approval_request["decision"] = decision
+        if comment:
+            approval_request["comment"] = comment
+
+        # If this is a conflict resolution, update the conflict history
+        if approval_request["type"] == "conflict_resolution":
+            conflict_id = approval_request.get("conflict_id")
+            if conflict_id and conflict_id in self.conflict_history:
+                self.conflict_history[conflict_id]["resolution"] = {
+                    "resolved_by": "human",
+                    "decision": decision,
+                    "comment": comment,
+                    "resolved_at": time.time()
+                }
+
+                logger.info(f"Updated conflict {conflict_id} with human resolution: {decision}")
+
+        # Save state
+        self._save_state()
+
+        logger.info(f"Resolved approval request {request_id} with decision: {decision}")
+
+        return {
+            "status": "success",
+            "message": f"Approval request resolved with decision: {decision}",
+            "data": approval_request
+        }
+
+    def create_mediator_agent(self):
+        """
+        Create a specialized mediator agent for conflict resolution
+
+        Returns:
+            dict: Status and the created agent's ID
+        """
+        try:
+            # Create the mediator agent with specialized capabilities
+            mediator_data = {
+                "id": "mediator-agent",
+                "name": "Mediator",
+                "role": "Conflict Mediator",
+                "goal": "Resolve conflicts and disagreements between agents with fair and balanced solutions",
+                "backstory": "Mediator specializes in analyzing competing perspectives, identifying common ground, and crafting solutions that address the core concerns of all parties. They excel at diplomatic communication and creative problem-solving.",
+                "tone": "Balanced",
+                "learning_style": "Analytical",
+                "working_style": "Diplomatic",
+                "communication_style": "Clear and neutral",
+                "traits": ["Unbiased", "Patient", "Insightful"],
+                "quirks": ["Reframes problems from multiple perspectives", "Seeks consensus without compromising quality"],
+                "metadata": {
+                    "type": "system_agent",
+                    "logical_id": "mediator",
+                    "is_mediator": True
+                }
+            }
+
+            # Create the mediator agent
+            mediator = self._create_agent_from_data(mediator_data)
+
+            if mediator and hasattr(mediator, 'id'):
+                mediator_id = mediator.id
+                self.agents[mediator_id] = mediator
+                logger.info(f"Created mediator agent with ID {mediator_id}")
+
+                return {
+                    "status": "success",
+                    "agent_id": mediator_id,
+                    "message": "Mediator agent created successfully"
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Failed to create mediator agent"
+                }
+        except Exception as e:
+            logger.error(f"Error creating mediator agent: {e}")
+            return {
+                "status": "error",
+                "message": f"Failed to create mediator agent: {str(e)}"
+            }
+
+    def register_conflict(self, conflict_data):
+        """
+        Register a conflict between agents for resolution
+
+        Args:
+            conflict_data (dict): Data about the conflict including:
+                - agents: List of agent IDs involved
+                - topic: What the conflict is about
+                - description: Detailed description of the conflict
+                - positions: Dict mapping agent IDs to their positions
+                - impact: The impact/importance of resolving this conflict
+                - resolution_approaches: Possible approaches to resolution
+
+        Returns:
+            dict: Conflict details including resolution status
+        """
+        conflict_id = f"conflict-{uuid.uuid4()}"
+
+        # Create the conflict structure
+        conflict = {
+            "id": conflict_id,
+            "agents": conflict_data.get("agents", []),
+            "topic": conflict_data.get("topic", "Unspecified conflict"),
+            "description": conflict_data.get("description", ""),
+            "positions": conflict_data.get("positions", {}),
+            "impact": conflict_data.get("impact", "medium"),
+            "created_at": time.time(),
+            "status": "pending",
+            "resolution_approaches": conflict_data.get("resolution_approaches", []),
+            "resolution": None
+        }
+
+        # Store the conflict
+        self.conflict_history[conflict_id] = conflict
+
+        # Find our mediator
+        mediator = self.find_agent(logical_id="mediator")
+
+        # If no mediator exists, create one
+        if not mediator:
+            mediator_result = self.create_mediator_agent()
+            if mediator_result["status"] == "success":
+                mediator = self.agents.get(mediator_result["agent_id"])
+            else:
+                logger.warning("Could not create mediator agent for conflict resolution")
+
+        # If we now have a mediator, ask for a resolution proposal
+        if mediator:
+            # Format agent positions for the prompt
+            positions_text = ""
+            for agent_id, position in conflict["positions"].items():
+                agent = self.agents.get(agent_id)
+                agent_name = getattr(agent, 'name', agent_id) if agent else agent_id
+                positions_text += f"- {agent_name} ({agent_id}): {position}\n"
+
+            # Approaches text
+            approaches_text = "\n".join([f"- {approach}" for approach in conflict["resolution_approaches"]]) if conflict["resolution_approaches"] else "No specific approaches suggested."
+
+            # Create the mediator prompt
+            prompt = f"""
+            # Conflict Resolution Request
+
+            ## Conflict Topic
+            {conflict["topic"]}
+
+            ## Description
+            {conflict["description"]}
+
+            ## Agent Positions
+            {positions_text}
+
+            ## Impact/Importance
+            {conflict["impact"].upper()}
+
+            ## Possible Resolution Approaches
+            {approaches_text}
+
+            As a mediator, please analyze this conflict and suggest the optimal resolution. Consider:
+            1. The technical merits of each position
+            2. The implications for the overall project
+            3. Creative compromises that capture the benefits of multiple approaches
+            4. Clear reasoning for your recommendation
+
+            Provide your response in this format:
+            ```json
+            {{
+                "analysis": "Your detailed analysis of the conflict...",
+                "recommendation": "Your specific recommendation...",
+                "reasoning": "Your reasoning for this recommendation...",
+                "compromise_elements": ["Element from position 1", "Element from position 2", "..."],
+                "implementation_steps": ["Step 1", "Step 2", "..."]
+            }}
+            ```
+            """
+
+            # Ask the mediator for a resolution
+            try:
+                logger.info(f"Requesting conflict resolution from mediator for conflict {conflict_id}")
+
+                response = None
+                if hasattr(mediator, '_process_message'):
+                    response = mediator._process_message(prompt)
+                elif hasattr(mediator, 'run'):
+                    response = mediator.run(prompt)
+
+                if response:
+                    # Try to extract JSON from the response
+                    import re
+                    import json
+
+                    json_match = re.search(r'```json\n(.*?)\n```', response, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(1)
+                    else:
+                        # Look for just a JSON object
+                        json_match = re.search(r'({[\s\S]*})', response)
+                        json_str = json_match.group(1) if json_match else response
+
+                    try:
+                        resolution = json.loads(json_str)
+
+                        # Update the conflict with the mediator's resolution
+                        conflict["mediator_resolution"] = resolution
+                        conflict["status"] = "mediator_proposed"
+
+                        # Now ask for human approval of the mediator's resolution
+                        approval_request = {
+                            "type": "conflict_resolution",
+                            "agent_id": mediator.id if hasattr(mediator, 'id') else "mediator",
+                            "content": f"Conflict: {conflict['topic']}\n\nMediator recommendation: {resolution['recommendation']}\n\nReasoning: {resolution['reasoning']}",
+                            "options": [
+                                {"id": "approve_mediator", "label": "Approve mediator's recommendation", "description": "Accept the mediator's proposed resolution"},
+                                {"id": "modify", "label": "Modify resolution", "description": "Make adjustments to the proposed resolution"},
+                                {"id": "reject", "label": "Reject and restart", "description": "Reject the proposal and restart mediation"}
+                            ],
+                            "urgency": "medium",
+                            "conflict_id": conflict_id
+                        }
+
+                        # Create the approval request
+                        approval_result = self.request_human_approval(approval_request)
+
+                        # Link the approval request to the conflict
+                        if approval_result["status"] == "success":
+                            conflict["approval_request_id"] = approval_result["data"]["id"]
+
+                        # Save updated conflict state
+                        self._save_state()
+
+                        logger.info(f"Created mediator resolution for conflict {conflict_id} with approval request {conflict.get('approval_request_id')}")
+
+                        return {
+                            "status": "success",
+                            "message": "Conflict registered with mediator resolution",
+                            "data": {
+                                "conflict_id": conflict_id,
+                                "mediator_resolution": resolution,
+                                "approval_request_id": conflict.get("approval_request_id")
+                            }
+                        }
+                    except json.JSONDecodeError:
+                        logger.error(f"Could not parse JSON from mediator response: {response}")
+                        # Continue with human-only resolution
+                else:
+                    logger.warning("Mediator did not return a response")
+            except Exception as e:
+                logger.error(f"Error getting resolution from mediator: {e}")
+
+        # If we don't have a mediator or it failed, go straight to human resolution
+        approval_request = {
+            "type": "conflict_resolution",
+            "content": f"Conflict: {conflict['topic']}\n\nDescription: {conflict['description']}\n\nPlease resolve this conflict between agents.",
+            "options": [
+                {"id": "option_a", "label": f"Option A", "description": list(conflict["positions"].values())[0] if conflict["positions"] else "No position specified"},
+            ],
+            "urgency": conflict["impact"],
+            "conflict_id": conflict_id
+        }
+
+        # Add Option B if we have at least two positions
+        if len(conflict["positions"]) > 1:
+            approval_request["options"].append({
+                "id": "option_b",
+                "label": "Option B",
+                "description": list(conflict["positions"].values())[1]
+            })
+
+        # Add Option C for a compromise/alternate solution
+        approval_request["options"].append({
+            "id": "compromise",
+            "label": "Compromise Solution",
+            "description": "Provide a compromise or alternative solution"
+        })
+
+        # Create the approval request
+        approval_result = self.request_human_approval(approval_request)
+
+        # Link the approval request to the conflict
+        if approval_result["status"] == "success":
+            conflict["approval_request_id"] = approval_result["data"]["id"]
+
+        # Save state
+        self._save_state()
+
+        logger.info(f"Registered conflict {conflict_id} for human resolution")
+
+        return {
+            "status": "success",
+            "message": "Conflict registered for human resolution",
+            "data": {
+                "conflict_id": conflict_id,
+                "approval_request_id": conflict.get("approval_request_id")
+            }
+        }
+
+    def get_conflict_history(self, agent_id=None, limit=10, status=None):
+        """
+        Get conflict history, optionally filtered by agent or status
+
+        Args:
+            agent_id (str, optional): Filter conflicts involving this agent
+            limit (int, optional): Maximum number of conflicts to return
+            status (str, optional): Filter by conflict status
+
+        Returns:
+            dict: List of conflicts matching the criteria
+        """
+        conflicts = []
+
+        for conflict_id, conflict in sorted(
+            self.conflict_history.items(),
+            key=lambda x: x[1]["created_at"],
+            reverse=True
+        ):
+            # Apply filters
+            if agent_id and agent_id not in conflict["agents"]:
+                continue
+
+            if status and conflict["status"] != status:
+                continue
+
+            # Add conflict to results
+            conflicts.append(conflict)
+
+            # Apply limit
+            if len(conflicts) >= limit:
+                break
+
+        return {
+            "status": "success",
+            "count": len(conflicts),
+            "data": conflicts
+        }
+
+    def send_message_to_agent(self, agent_id, message, is_group=False, metadata=None, direct_to=None):
+        """
+        Send a message to an agent or a group of agents
+        
+        Args:
+            agent_id (str): The ID of the agent to send the message to
+            message (str): The message to send
+            is_group (bool): Whether to send to a group of agents
+            metadata (dict): Additional metadata to include with the message
+            direct_to (str): The ID of the specific agent to direct the message to in a group
+            
+        Returns:
+            dict: The result of the message
+        """
+        try:
+            if is_group:
+                # Group messages - not implemented yet
+                return {
+                    "status": "error",
+                    "message": "Group messaging not implemented yet"
+                }
+                
+            # Verify the agent exists
+            if agent_id not in self.agents:
+                logger.error(f"Agent {agent_id} not found")
+                return {
+                    "status": "error",
+                    "message": f"Agent {agent_id} not found"
+                }
+                
+            agent = self.agents[agent_id]
+            
+            # Format message with XML tags if not already formatted
+            formatted_message = message
+            if "<message>" not in message:
+                user_name = metadata.get("user_name", "User") if metadata else "User"
+                formatted_message = f"""<message from="{user_name}">
+{message}
+</message>"""
+            
+            # Add context with XML tags if available
+            if metadata and "context" in metadata:
+                context = metadata["context"]
+                if context and "<context>" not in formatted_message:
+                    formatted_message += f"\n\n<context>\n{context}\n</context>"
+            
+            # Add previous messages as history if available
+            if metadata and "history" in metadata:
+                history = metadata["history"]
+                if history and "<history>" not in formatted_message:
+                    history_text = "\n".join(history)
+                    formatted_message += f"\n\n<history>\n{history_text}\n</history>"
+                    
+            # Add learning context if available
+            if metadata and "learning_context" in metadata:
+                learning = metadata["learning_context"]
+                if learning and "<learning_context>" not in formatted_message:
+                    formatted_message += f"\n\n<learning_context>\n{learning}\n</learning_context>"
+            
+            try:
+                # Set up embeddings for the crew's memory
+                try:
+                    from langchain_huggingface import HuggingFaceEmbeddings
+                    sentence_transformer_model = "all-MiniLM-L6-v2"
+                    # Create embedder config dictionary instead of passing the object directly
+                    embedder_config = {
+                        "provider": "huggingface",
+                        "model": sentence_transformer_model
+                    }
+                    logger.info(f"Created embeddings config with model {sentence_transformer_model} for message handling")
+
+                    temp_crew = Crew(
+                        agents=[agent],
+                        tasks=[Task(
+                            description=f"Process this message and respond appropriately: {formatted_message}",
+                            agent=agent,
+                            expected_output="A thoughtful and helpful response"
+                        )],
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True,
+                        embedder=embedder_config
+                    )
+                except ImportError:
+                    logger.warning("Could not import HuggingFaceEmbeddings - using default memory")
+
+                    temp_crew = Crew(
+                        agents=[agent],
+                        tasks=[Task(
+                            description=f"Process this message and respond appropriately: {formatted_message}",
+                            agent=agent,
+                            expected_output="A thoughtful and helpful response"
+                        )],
+                        verbose=True,
+                        process=Process.sequential,
+                        memory=True
+                    )
+                
+                # Kick off the crew with the single task
+                result = temp_crew.kickoff()
+                
+                # Process the result and ensure it's a string
+                response = ensure_string_output(result)
+                
+                # Format the response with XML tags if it's not already formatted
+                if "<response>" not in response:
+                    agent_name = getattr(agent, 'name', 'Assistant')
+                    response = f"""<response from="{agent_name}">
+{response}
+</response>"""
+                
+                logger.info(f"Agent {agent_id} response: {response[:100]}...")
+                
+                return {
+                    "status": "success", 
+                    "message": response,
+                    "agent_id": agent_id
+                }
+                
+            except Exception as e:
+                logger.error(f"Error sending message to agent {agent_id}: {e}")
+                return {
+                    "status": "error",
+                    "message": f"Error sending message to agent {agent_id}: {str(e)}"
+                }
+        
+        except Exception as e:
+            logger.error(f"Error in send_message_to_agent: {e}")
+            return {
+                "status": "error",
+                "message": f"Error: {str(e)}"
+            }
+
+    def check_connectivity(self):
+        """
+        Check network connectivity to API endpoints
+
+        Returns:
+            dict: Connectivity status
+        """
+        import socket
+        import urllib.request
+        import http.client
+        import ssl
+
+        logger.info("Checking network connectivity...")
+
+        # Endpoints to check (Anthropic and OpenAI API endpoints)
+        endpoints = [
+            "api.anthropic.com",
+            "api.openai.com"
+        ]
+
+        def check_endpoint(endpoint, timeout=5):
+            try:
+                # First try simple socket connection to check basic connectivity
+                socket.create_connection((endpoint, 443), timeout=timeout)
+
+                # If socket connects, try HTTPS connection to verify SSL works
+                conn = http.client.HTTPSConnection(endpoint, timeout=timeout)
+                conn.request("HEAD", "/")
+                resp = conn.getresponse()
+                conn.close()
+
+                logger.info(f"Connection to {endpoint} successful (status: {resp.status})")
+                return True
+            except (socket.timeout, socket.error, ConnectionRefusedError,
+                    ssl.SSLError, http.client.HTTPException) as e:
+                logger.error(f"Failed to connect to {endpoint}: {e}")
+                return False
+            except Exception as e:
+                logger.error(f"Unexpected error connecting to {endpoint}: {e}")
+                return False
+
+        # Check all endpoints
+        results = [check_endpoint(endpoint) for endpoint in endpoints]
+
+        # Return true if at least one endpoint is reachable
+        is_online = any(results)
+        logger.info(f"Network connectivity check result: {'Online' if is_online else 'Offline'}")
+
+        return {
+            "status": "completed",
+            "online": is_online,
+            "endpoints_checked": endpoints,
+            "detailed_results": dict(zip(endpoints, results))
+        }
+
+    def handle_request(self, request):
+        """
+        Handle a request from the VSCode extension
+
+        Args:
+            request (dict): Request data
+
+        Returns:
+            dict: Response data
+        """
+        try:
+            command = request.get("command")
+            payload = request.get("payload", {})
+
+            logger.info(f"Received command: {command} with payload: {payload}")
+
+            # Handle case-insensitive commands
+            command_lower = command.lower() if command else ""
+
+            if command_lower == "create_agent":
+                # If metadata is provided with the agent, it will be included in the payload
+                agent_result = self._create_agent_from_data(payload)
+                if agent_result:
+                    # Generate an agent ID if not provided
+                    agent_id = payload.get("id", str(uuid.uuid4()))
+
+                    # Store the agent
+                    self.agents[agent_id] = agent_result
+                    payload["id"] = agent_id
+
+                    # Attach default tools to the agent
+                    default_tools = ["learning_system", "project_management", "json_output", "extract_json", "shell_execute"]
+                    self._attach_tools_to_agent(agent_result, default_tools)
+
+                    # Save the updated state
+                    self._save_state()
+
+                    return {
+                        "status": "success",
+                        "agent_id": agent_id,
+                        "agent_name": getattr(agent_result, "name", None) or payload.get("role", "Agent"),
+                        "tools_attached": default_tools
+                    }
+                else:
+                    return {"status": "error", "message": "Failed to create agent"}
+            elif command_lower == "create_task":
+                return self.create_task(payload)
+            elif command_lower == "create_crew" or command_lower == "createteam" or command_lower == "create_team":
+                logger.info(f"Creating crew/team with payload: {payload}")
+                return self.create_crew(payload)
+            elif command_lower == "run_crew":
+                return self.run_crew(payload.get("crew_id"))
+            elif command_lower == "send_message":
+                return self.send_message_to_agent(
+                    payload.get("agent_id"),
+                    payload.get("message"),
+                    payload.get("is_group", False),
+                    payload.get("metadata"),  # Pass any provided metadata to the agent
+                    payload.get("directTo")   # Pass the directTo property explicitly
+                )
+            elif command_lower == "create_task_coordinator":
+                return self.create_task_coordinator(
+                    payload.get("crew_id")
+                )
+            elif command_lower == "find_suitable_agent":
+                return self.find_suitable_agent(
+                    task_description=payload.get("task_description"),
+                    required_skills=payload.get("required_skills"),
+                    priority=payload.get("priority", "medium"),
+                    deadline=payload.get("deadline")
+                )
+            elif command_lower == "assign_task":
+                return self.assign_task(
+                    task_data=payload.get("task_data", {}),
+                    assignee_id=payload.get("assignee_id")
+                )
+            elif command_lower == "list_agents":
+                return {
+                    "status": "success",
+                    "agents": self.list_agents(team=payload.get("team"))
+                }
+            elif command_lower == "check_connectivity":
+                return self.check_connectivity()
+            # New conflict resolution and approval endpoints
+            elif command_lower == "create_mediator":
+                return self.create_mediator_agent()
+            elif command_lower == "register_conflict":
+                return self.register_conflict(payload)
+            elif command_lower == "get_conflicts":
+                return self.get_conflict_history(
+                    agent_id=payload.get("agent_id"),
+                    limit=payload.get("limit", 10),
+                    status=payload.get("status")
+                )
+            elif command_lower == "request_approval":
+                return self.request_human_approval(payload)
+            elif command_lower == "resolve_approval":
+                return self.resolve_approval_request(
+                    request_id=payload.get("request_id"),
+                    decision=payload.get("decision"),
+                    comment=payload.get("comment")
+                )
+            elif command_lower == "pending_approvals":
+                # Return list of pending approval requests
+                pending = [req for req_id, req in self.pending_approvals.items()
+                           if req.get("status") == "pending"]
+                return {
+                    "status": "success",
+                    "count": len(pending),
+                    "data": pending
+                }
+            elif command_lower == "agent_to_agent_message":
+                return self.agent_to_agent_message(
+                    from_agent_id=payload.get("from_agent_id"),
+                    to_agent_id=payload.get("to_agent_id"),
+                    message=payload.get("message"),
+                    context=payload.get("context")
+                )
+            elif command_lower == "codebase_index":
+                return self.handle_codebase_index(payload)
+            else:
+                logger.error(f"Unknown command: {command}")
+                return {"status": "error", "message": f"Unknown command: {command}"}
+
+        except Exception as e:
+            logger.error(f"Error handling request: {e}", exc_info=True)
+            return {"status": "error", "message": f"Failed to handle request: {str(e)}"}
+
+def setup_socket_server(port=9876, max_attempts=5):
+    """Set up a socket server to listen for requests
+
+    Args:
+        port: The port to listen on
+        max_attempts: Maximum number of attempts to bind to port
+
+    Returns:
+        socket: The server socket
+
+    Raises:
+        OSError: If the socket cannot be bound after max_attempts
+    """
+    # Try to connect to the port first to see if a server is running
+    try:
+        test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        test_socket.settimeout(1)
+        test_socket.connect(('localhost', port))
+        # If we can connect, a server is already running
+        test_socket.close()
+        print(f"A server is already running on port {port}")
+        # Return an error
+        return None
+    except (ConnectionRefusedError, socket.timeout):
+        # No server running, proceed with creating our server
+        pass
+    except Exception as e:
+        print(f"Error testing port: {e}")
+    finally:
+        try:
+            test_socket.close()
+        except:
+            pass
+
+    # Try different ports if the specified one is in use
+    for attempt in range(max_attempts):
+        try:
+            current_port = port + attempt
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.bind(('localhost', current_port))
+            server_socket.listen(5)
+            if current_port != port:
+                print(f"Port {port} was in use, listening on port {current_port} instead")
+            return server_socket
+        except OSError as e:
+            print(f"Attempt {attempt+1}/{max_attempts}: Failed to bind to port {current_port}: {e}")
+            server_socket.close()
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep(1)  # Brief delay before trying next port
+
+def handle_client(client_socket, server):
+    """Handle a client connection"""
+    try:
+        # Receive data from the client
+        data = b''
+        while True:
+            chunk = client_socket.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+            # Check if we have a complete message
+            if b'\n' in data:
+                break
+
+        if not data:
+            return
+
+        # Parse the request
+        request_str = data.decode('utf-8').strip()
+        request = json.loads(request_str)
+
+        # Handle the request
+        response = server.handle_request(request)
+
+        # Send the response
+        client_socket.sendall(json.dumps(response).encode('utf-8') + b'\n')
+
+    except Exception as e:
+        logger.error(f"Error handling client: {e}")
+        try:
+            # Send an error response
+            error_response = {"status": "error", "message": str(e)}
+            client_socket.sendall(json.dumps(error_response).encode('utf-8') + b'\n')
+        except:
+            pass
+    finally:
+        # Close the client socket
+        client_socket.close()
+
+def cleanup_resources(server_socket, port_file, pid_file):
+    """Cleanup function to release resources on exit"""
+    logger.info("Cleaning up server resources...")
+    try:
+        if server_socket:
+            server_socket.close()
+            logger.info("Closed server socket")
+    except Exception as e:
+        logger.error(f"Error closing server socket: {e}")
+
+    try:
+        # Remove the port file
+        if port_file and os.path.exists(port_file):
+            os.remove(port_file)
+            logger.info(f"Removed port file: {port_file}")
+    except Exception as e:
+        logger.error(f"Error removing port file: {e}")
+
+    try:
+        # Remove the PID file
+        if pid_file and os.path.exists(pid_file):
+            os.remove(pid_file)
+            logger.info(f"Removed PID file: {pid_file}")
+    except Exception as e:
+        logger.error(f"Error removing PID file: {e}")
+
+    logger.info("Cleanup complete")
+
+def signal_handler(sig, frame, server_socket=None, port_file=None, pid_file=None):
+    """Handle signals to ensure clean shutdown"""
+    signal_name = {
+        signal.SIGINT: "SIGINT",
+        signal.SIGTERM: "SIGTERM"
+    }.get(sig, str(sig))
+
+    logger.info(f"Received {signal_name}, shutting down...")
+    cleanup_resources(server_socket, port_file, pid_file)
+    sys.exit(0)
+
+def main():
+    """Main entry point for the CrewAI server"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="MightyDev CrewAI Server")
+    parser.add_argument("--project-path", type=str, required=True, help="Path to the project root directory")
+    parser.add_argument("--port", type=int, default=9876, help="Port to listen on")
+
+    args = parser.parse_args()
+
+    # Create the .tribe directory if it doesn't exist
+    tribe_dir = os.path.join(args.project_path, ".tribe")
+    os.makedirs(tribe_dir, exist_ok=True)
+
+    # Define port and PID file paths
+    port_file = os.path.join(tribe_dir, "server_port.txt")
+    pid_file = os.path.join(tribe_dir, "server_pid.txt")
+
+    # Check for existing PID file and kill previous server if possible
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r") as f:
+                old_pid = int(f.read().strip())
+
+            # Try to terminate the previous process
+            logger.info(f"Found existing server PID: {old_pid}, attempting to terminate")
+            try:
+                if sys.platform == "win32":
+                    # Windows
+                    os.system(f"taskkill /F /PID {old_pid} /T")
+                else:
+                    # Unix-like
+                    os.kill(old_pid, signal.SIGTERM)
+                    # Give it a moment to close
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"Error terminating previous server: {e}")
+        except Exception as e:
+            logger.error(f"Error reading PID file: {e}")
+
+    # Write our PID to the PID file
+    try:
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+        logger.info(f"Wrote PID {os.getpid()} to {pid_file}")
+    except Exception as e:
+        logger.error(f"Failed to write PID file: {e}")
+
+    # Create the CrewAI server
+    server = CrewAIServer(args.project_path)
+
+    # Set up the socket server
+    server_socket = setup_socket_server(args.port)
+    if server_socket is None:
+        # A server is already running, just exit
+        logger.info(f"Another CrewAI server is already running on port {args.port}. Exiting.")
+        # Clean up the PID file before exiting
+        try:
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+        except:
+            pass
+        sys.exit(0)
+
+    current_port = server_socket.getsockname()[1]
+    logger.info(f"CrewAI server listening on port {current_port} for project: {args.project_path}")
+
+    # Create a file to indicate the server is running and what port it's on
+    try:
+        with open(port_file, "w") as f:
+            f.write(str(current_port))
+        logger.info(f"Wrote port information to {port_file}")
+    except Exception as e:
+        logger.error(f"Failed to write port file: {e}")
+
+    # Set up signal handlers for clean shutdown
+    signal.signal(signal.SIGINT, lambda sig, frame: signal_handler(sig, frame, server_socket, port_file, pid_file))
+    signal.signal(signal.SIGTERM, lambda sig, frame: signal_handler(sig, frame, server_socket, port_file, pid_file))
+
+    # Register atexit handler for cleanup
+    atexit.register(lambda: cleanup_resources(server_socket, port_file, pid_file))
+
+    try:
+        # Main server loop
+        while True:
+            # Accept a client connection
+            client_socket, addr = server_socket.accept()
+            logger.info(f"Accepted connection from {addr}")
+
+            # Handle the client in a separate thread
+            client_thread = threading.Thread(target=handle_client, args=(client_socket, server))
+            client_thread.daemon = True
+            client_thread.start()
+
+    except KeyboardInterrupt:
+        logger.info("Server shutting down...")
+    except Exception as e:
+        logger.error(f"Server error: {e}", exc_info=True)
+    finally:
+        # Final cleanup
+        cleanup_resources(server_socket, port_file, pid_file)
+
+if __name__ == "__main__":
+    main()
